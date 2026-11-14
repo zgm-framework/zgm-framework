@@ -1,6 +1,6 @@
 # zgm-framework
 
-Building blocks for the security side of multi-tenant applications in Rust, on PostgreSQL.
+Building blocks for multi-tenant applications in Rust, on PostgreSQL.
 
 This is a collection of modules extracted from [leads.run](https://leads.run), which uses them. Each module is a separate crate that can be used on its own.
 
