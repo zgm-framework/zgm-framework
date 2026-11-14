@@ -1,0 +1,4 @@
+[toolchain]
+# The same compiler as `rust-version` in Cargo.toml. This file selects it for `cargo` run in this
+# folder, regardless of the default Rust on the machine.
+channel = "1.94.0"
