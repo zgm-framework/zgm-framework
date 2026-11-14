@@ -394,6 +394,7 @@ ALTER DATABASE app SET idle_in_transaction_session_timeout = '60s';
 ## What to watch out for
 
 - **An error of the module is a refusal, not a permission.** When `hit()` returns an error, do not let the guarded action through.
+- **A request cancelled mid-call may still use up an attempt.** Once the statement is sent, the database finishes it; see [Measurements](#measurements).
 - **A full pool means waiting.** A request waits for a connection for up to 30 seconds by default before it gets an error; the pool's `acquire_timeout` sets that.
 - **A block works against the victim too.** Whoever knows a login can keep that account blocked for ever with three wrong passwords every 15 minutes. Every lock-out by account works like this; an administrator sees it on the list of blocked keys and can lift it.
 - **`reset()` after a success suits a key with one owner.** On an account its owner signs in to often, an attacker gets fresh attempts after each of those sign-ins.
@@ -423,7 +424,47 @@ ALTER DATABASE app SET idle_in_transaction_session_timeout = '60s';
 
 - **94 tests on a real PostgreSQL,** each on its own empty database ([ADR-0010](docs/adr/0010-tests-in-the-tests-folder-on-a-database.md)).
 - **Under a flood, twice,** on a table of about 2 million counters: about 2 million attempts sent straight as SQL and about 475,000 calls through the Rust API, with rule changes, resets, unblocks and the cleanup running at the same time. No key was ever allowed more than its limit, refusals wrote nothing, there were no deadlocks, and no attempt needed more than 7 of its 10 tries.
-- **These are measurements on one laptop with a local database,** not a benchmark. Absolute numbers will differ on your hardware; the ratios quoted in this README and in the decision records come from runs of two variants alternated at least five times.
+
+### Measurements
+
+**Read these as orders of magnitude, not as a benchmark.** They come from one laptop (Apple M4, 10 cores, 16 GB) with PostgreSQL 18 in Docker on the same machine, which was busy with other work during the runs (load average 10–18). One round trip to the database (`SELECT 1` through the pool) took 0.38 ms there; between two real machines it will take longer.
+
+One call at a time, no concurrency (median of 2000 calls):
+
+| Call | p50 |
+|---|---|
+| an attempt that passes | 0.82 ms |
+| an attempt that is refused | 0.63 ms |
+
+Under concurrency, through the Rust API, on a table of about 1 million counters (median of five 10–15 s rounds):
+
+| Load | Pool / tasks | Calls per second | p50 | p99 |
+|---|---|---|---|---|
+| refusals on blocked keys | 10 / 64 | 4,776 | 11 ms | 44 ms |
+| refusals on blocked keys | 32 / 256 | 6,471 | 33 ms | 130 ms |
+| passing attempts, 200,000 keys | 10 / 64 | 3,364 | 16 ms | 64 ms |
+| passing attempts, 200,000 keys | 32 / 256 | 5,093 | 46 ms | 182 ms |
+| passing attempts, 20 hot keys | 10 / 64 | 3,642 | 16 ms | 58 ms |
+| passing attempts, 20 hot keys | 32 / 256 | 4,343 | 55 ms | 142 ms |
+| passing attempts, 2 hot keys | 32 / 256 | about 1,900 | 123 ms | 280–320 ms |
+
+With several times more tasks than connections, most of that latency is a task waiting for a connection from the pool, not the query. Twenty hot keys cost about as much as 200,000 independent ones; the price of contention shows only when nearly every attempt is on the same two rows.
+
+Waiting for a row lock, measured at the SQL level with 32 sessions on a table of 2 million counters, by sampling `pg_locks` and logging every wait above 100 ms:
+
+| Situation | Sessions waiting at once | Longest wait |
+|---|---|---|
+| everything at once for 3 × 60 s: attempts of both kinds, resets, unblocks, a rule change every 50 ms, two cleanup loops | at most 3 of 32 | 138 ms |
+| a tenant under a flood while its rule changes 900–2,200 times in 15 s | none | none |
+| a key that comes back while the cleanup deletes its old row | at most 2 of 32 | 352 ms |
+| an outside transaction holds a counter's row for 3 s | the attempts on that key | 1.8 s for an attempt that passes; a refusal on the same row answered in 17 ms |
+
+- **In the first row, what waited was two unblocks of the same key, or two attempts on the same key.** Nothing was seen waiting behind the cleanup or behind a rule change. There were 0 deadlocks and 0 failed statements, and 83 of 425,767 attempts (0.02%) had to be asked again.
+- **The last row is why we recommend `lock_timeout`** ([Connection pool](#connection-pool)): the module does not bound that wait itself.
+
+**Cancellation.** A request that is cancelled or times out mid-call may still use up an attempt. An attempt is one statement that the database commits on its own. Cancelled while waiting for a pool connection, nothing was sent and nothing is counted. Cancelled after the statement was sent, the database still finishes it, so the attempt counts although the caller never saw the answer. The module can count an attempt nobody used; it never lets more than the limit through. In a run of 12,000 calls under timeouts of 0.2–6 ms, 8,427 were dropped mid-call: the counters were exact and no key went over its limit.
+
+**Not measured:** lock waits sampled during the hot-key runs through the Rust API (only their latency), how long the row lock of one attempt is held, cancelling a request exactly while its statement waits for a row lock, a real network, and a quiet machine.
 
 ## Running the example and the tests
 
