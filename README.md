@@ -36,9 +36,10 @@ cargo test --workspace
 
 Built and maintained by Paweł Zygmunt ([LinkedIn](https://www.linkedin.com/in/pawel-zygmunt-226831181/), [GitHub](https://github.com/Pawel-Zygmunt)), who also builds [leads.run](https://leads.run). Every design decision is written down next to the code, with the options that were rejected and the measurements behind the choice.
 
-## Security
+## Bugs, questions and vulnerabilities
 
-Please report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+- **Bugs, questions and ideas:** open an [issue](https://github.com/zgm-framework/zgm-framework/issues) and say which module it is about.
+- **Vulnerabilities:** report them privately, so that a fix can be released before the details are public; see [SECURITY.md](SECURITY.md).
 
 ## License
 
