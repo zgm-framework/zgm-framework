@@ -40,6 +40,7 @@ Built and maintained by Paweł Zygmunt ([LinkedIn](https://www.linkedin.com/in/p
 
 - **Bugs, questions and ideas:** open an [issue](https://github.com/zgm-framework/zgm-framework/issues) and say which module it is about.
 - **Vulnerabilities:** report them privately, so that a fix can be released before the details are public; see [SECURITY.md](SECURITY.md).
+- **Pull requests** are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) says how to run the tests and what a change needs.
 
 ## License
 
