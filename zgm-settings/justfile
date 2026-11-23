@@ -1,0 +1,10 @@
+default: run
+
+build:
+    cargo build
+
+run:
+    cargo run --example tour
+
+test:
+    cargo test

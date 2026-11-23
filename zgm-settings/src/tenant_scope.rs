@@ -1,0 +1,151 @@
+//! What the module does within one tenant.
+
+use std::collections::HashMap;
+
+use uuid::Uuid;
+
+use crate::error::SettingsError;
+use crate::repository::{self, StoredValue};
+use crate::setting::Setting;
+use crate::settings::Settings;
+use crate::value::Value;
+
+/// The module within one tenant: every function of a tenant hangs from here, so none can be
+/// called without the tenant, and none reaches past it.
+///
+/// ```ignore
+/// let in_nowak = settings.tenant_id(nowak.id);
+/// let window = in_nowak.get(IamSetting::UserDeletionWindow).await?;
+/// ```
+///
+/// [`Settings::tenant_id`] gives it without asking the database, and the module does not know
+/// which tenants exist: a tenant it never heard of has the defaults. It holds its own copy of
+/// [`Settings`], so an application with one tenant can make it once, when it starts, and
+/// clone it where it needs it.
+#[derive(Debug, Clone)]
+pub struct TenantScope {
+    settings: Settings,
+    tenant_id: Uuid,
+}
+
+impl TenantScope {
+    pub(crate) fn new(settings: Settings, tenant_id: Uuid) -> Self {
+        Self {
+            settings,
+            tenant_id,
+        }
+    }
+
+    /// The value of a setting in the tenant: the one the tenant set, or, when it set none, the
+    /// default a module gave.
+    ///
+    /// A name no module gave a default for is [`SettingsError::UnknownSetting`], also when the
+    /// tenant has a row of that name, and the database is not asked. A row with a value of
+    /// another kind than the default, which only SQL written by hand can write, is
+    /// [`SettingsError::WrongKind`], not the default.
+    pub async fn get(&self, name: impl AsRef<str>) -> Result<Value, SettingsError> {
+        let name = name.as_ref();
+        let default = self
+            .settings
+            .default_of(name)
+            .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
+        let mut connection = self.settings.pool().acquire().await?;
+        match repository::select_value(&mut connection, self.tenant_id, name).await? {
+            None => Ok(default),
+            Some(stored) => default
+                .read_like(&stored)
+                .ok_or_else(|| SettingsError::WrongKind {
+                    name: name.to_owned(),
+                    found: stored.json,
+                }),
+        }
+    }
+
+    /// Sets the value of a setting in the tenant, and says whether anything changed: `false`
+    /// when the tenant had that value already, and then not even `updated_at` moves.
+    ///
+    /// A value equal to the default is kept as a row of the tenant too: when a program
+    /// changes the default later, the tenant keeps its own. Going back to the default is
+    /// another function.
+    ///
+    /// Nothing is written for a name no module gave a default for
+    /// ([`SettingsError::UnknownSetting`]), for a value of another kind than the default
+    /// ([`SettingsError::WrongKind`]), or for a duration with a fraction of a second
+    /// ([`SettingsError::FractionOfASecond`]). The module checks no range: whether 0 days
+    /// make sense is for the program to check before.
+    pub async fn set(&self, name: impl AsRef<str>, value: Value) -> Result<bool, SettingsError> {
+        let name = name.as_ref();
+        let default = self
+            .settings
+            .default_of(name)
+            .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
+        if !value.is_of_the_kind_of(&default) {
+            return Err(SettingsError::WrongKind {
+                name: name.to_owned(),
+                found: format!("{value:?}"),
+            });
+        }
+        let json = value
+            .to_json()
+            .ok_or_else(|| SettingsError::FractionOfASecond(name.to_owned()))?;
+        let mut connection = self.settings.pool().acquire().await?;
+        repository::upsert_value(&mut connection, self.tenant_id, name, &json).await
+    }
+
+    /// Brings the tenant back to the default of a setting, by deleting its row, and says
+    /// whether there was a row: `false` when the tenant had the default already.
+    ///
+    /// The value of the row is not read, so a row of another kind than the default, which
+    /// only SQL written by hand can write and [`get`](Self::get) refuses, goes too.
+    ///
+    /// A name no module gave a default for is [`SettingsError::UnknownSetting`], and nothing
+    /// is deleted: the row of a setting no module gives any more stays.
+    pub async fn restore_default(&self, name: impl AsRef<str>) -> Result<bool, SettingsError> {
+        let name = name.as_ref();
+        if self.settings.default_of(name).is_none() {
+            return Err(SettingsError::UnknownSetting(name.to_owned()));
+        }
+        let mut connection = self.settings.pool().acquire().await?;
+        repository::delete_value(&mut connection, self.tenant_id, name).await
+    }
+
+    /// All the settings of the tenant, in the order of their names: every setting a module
+    /// gave a default for, with its value in the tenant, the default, and whether the tenant
+    /// has a value of its own. One query reads all the rows of the tenant.
+    ///
+    /// The row of a name no module gives a default for is left out. A row with a value of
+    /// another kind than the default, which only SQL written by hand can write, makes the
+    /// whole list [`SettingsError::WrongKind`], as in [`get`](Self::get).
+    pub async fn list(&self) -> Result<Vec<Setting>, SettingsError> {
+        let defaults = self.settings.defaults();
+        let mut connection = self.settings.pool().acquire().await?;
+        let mut rows: HashMap<String, StoredValue> =
+            repository::select_values(&mut connection, self.tenant_id)
+                .await?
+                .into_iter()
+                .collect();
+        defaults
+            .into_iter()
+            .map(|(name, default)| match rows.remove(&name) {
+                None => Ok(Setting {
+                    name,
+                    value: default.clone(),
+                    default,
+                    overridden: false,
+                }),
+                Some(stored) => match default.read_like(&stored) {
+                    Some(value) => Ok(Setting {
+                        name,
+                        value,
+                        default,
+                        overridden: true,
+                    }),
+                    None => Err(SettingsError::WrongKind {
+                        name,
+                        found: stored.json,
+                    }),
+                },
+            })
+            .collect()
+    }
+}

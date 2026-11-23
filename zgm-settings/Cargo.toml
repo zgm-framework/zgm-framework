@@ -1,0 +1,28 @@
+[package]
+name = "zgm-settings"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "The settings of an application's tenants, kept in PostgreSQL: the defaults come from the modules, the changes a tenant made from the database (work in progress)"
+authors = ["Paweł Zygmunt"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zgm-framework/zgm-framework"
+readme = "README.md"
+keywords = ["settings", "postgres", "sqlx", "multitenancy"]
+categories = ["web-programming", "database"]
+# Not published on crates.io: the crate is used as a git dependency for now.
+publish = false
+
+[dependencies]
+bon = "=3.10.2"
+sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "migrate", "macros", "uuid"] }
+thiserror = "=2.0.21"
+uuid = "=1.26.1"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[dev-dependencies]
+strum = { version = "=0.28.0", features = ["derive"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["macros", "rt"] }
