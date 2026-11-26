@@ -1,5 +1,7 @@
 //! What can go wrong in the module.
 
+use crate::value::Value;
+
 /// An error of the module.
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
@@ -41,6 +43,26 @@ pub enum SettingsError {
         kind: String,
         /// The JSON the row holds.
         found: String,
+    },
+
+    /// A value below the least its setting allows was given to
+    /// [`set`](crate::TenantScope::set), which then writes nothing.
+    #[error("the value for the setting {name} is below the least it allows, {min:?}")]
+    BelowTheLeast {
+        /// The name of the setting.
+        name: String,
+        /// The least, of the kind of the setting, e.g. a duration of a day.
+        min: Value,
+    },
+
+    /// A value above the most its setting allows was given to
+    /// [`set`](crate::TenantScope::set), which then writes nothing.
+    #[error("the value for the setting {name} is above the most it allows, {max:?}")]
+    AboveTheMost {
+        /// The name of the setting.
+        name: String,
+        /// The most, of the kind of the setting, e.g. a duration of a year.
+        max: Value,
     },
 
     /// A duration with a fraction of a second was given to

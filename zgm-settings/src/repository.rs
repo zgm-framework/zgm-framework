@@ -4,7 +4,7 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::error::SettingsError;
-use crate::value::Json;
+use crate::value::{Json, Value};
 
 /// The columns a [`StoredValue`] is read from, the same in every query that reads one, of
 /// the column `value` with the given prefix of its table, e.g. `"d."`. `#>> '{}'` gives SQL
@@ -76,29 +76,55 @@ pub(crate) async fn insert_default(
     Ok(written.rows_affected() == 1)
 }
 
-/// The kind and the value of the default of a setting, or `None` without a row.
+/// The row of the default of a setting.
+pub(crate) struct DefaultRow {
+    /// The word of its kind.
+    pub(crate) kind: String,
+    /// The default.
+    pub(crate) value: StoredValue,
+    /// The least and the most, a duration in whole seconds; `None` is no bound.
+    pub(crate) min: Option<i64>,
+    pub(crate) max: Option<i64>,
+}
+
+impl DefaultRow {
+    /// The default, read as the kind the row names; [`SettingsError::UnreadableDefault`] for a
+    /// kind the module does not know, or a value not of that kind.
+    pub(crate) fn read(&self, name: &str) -> Result<Value, SettingsError> {
+        Value::read_as(&self.kind, &self.value).ok_or_else(|| SettingsError::UnreadableDefault {
+            name: name.to_owned(),
+            kind: self.kind.clone(),
+            found: self.value.json.clone(),
+        })
+    }
+}
+
+/// The row of the default of a setting, or `None` without one.
 pub(crate) async fn select_default(
     connection: &mut PgConnection,
     name: &str,
-) -> Result<Option<(String, StoredValue)>, SettingsError> {
-    let row: Option<(String, String, String, String)> = sqlx::query_as(concat!(
+) -> Result<Option<DefaultRow>, SettingsError> {
+    type Row = (String, String, String, String, Option<i64>, Option<i64>);
+    let row: Option<Row> = sqlx::query_as(concat!(
         "SELECT kind, ",
         stored_value_columns!(),
-        " FROM zgm_settings.default_settings WHERE name = $1"
+        ", min, max FROM zgm_settings.default_settings WHERE name = $1"
     ))
     .bind(name)
     .fetch_optional(connection)
     .await?;
-    Ok(row.map(|(kind, json_type, text, json)| {
-        (
+    Ok(
+        row.map(|(kind, json_type, text, json, min, max)| DefaultRow {
             kind,
-            StoredValue {
+            value: StoredValue {
                 json_type,
                 text,
                 json,
             },
-        )
-    }))
+            min,
+            max,
+        }),
+    )
 }
 
 /// A setting in one tenant: the kind and the value of its default, and the value the tenant

@@ -79,15 +79,10 @@ impl Settings {
         .await?;
         // What the database has, which is what was given only when it was written now. A
         // statement of its own, which sees the row another copy of the program wrote meanwhile.
-        let (kind, stored) = repository::select_default(&mut connection, name)
+        let row = repository::select_default(&mut connection, name)
             .await?
             .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
-        let value =
-            Value::read_as(&kind, &stored).ok_or_else(|| SettingsError::UnreadableDefault {
-                name: name.to_owned(),
-                kind: kind.clone(),
-                found: stored.json.clone(),
-            })?;
+        let value = row.read(name)?;
         // A panic of another thread cannot leave the map half changed, so a poisoned lock is
         // taken over as it is.
         self.defaults

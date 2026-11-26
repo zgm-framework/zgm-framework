@@ -78,17 +78,24 @@ impl TenantScope {
     /// changes the default later, the tenant keeps its own. Going back to the default is
     /// another function.
     ///
-    /// Nothing is written for a name no module gave a default for
-    /// ([`SettingsError::UnknownSetting`]), for a value of another kind than the default
-    /// ([`SettingsError::WrongKind`]), or for a duration with a fraction of a second
-    /// ([`SettingsError::FractionOfASecond`]). The module checks no range: whether 0 days
-    /// make sense is for the program to check before.
+    /// The kind and the bounds are those of the row of the default in the database, read at
+    /// every call. A bound holds as it is now, also for the value the tenant has already: the
+    /// same value again, set while it lies outside the bounds, is refused.
+    ///
+    /// Nothing is written for a name without a default in the database
+    /// ([`SettingsError::UnknownSetting`]), for a row of the default the module cannot read
+    /// ([`SettingsError::UnreadableDefault`]), for a value of another kind than the default
+    /// ([`SettingsError::WrongKind`]), for a duration with a fraction of a second
+    /// ([`SettingsError::FractionOfASecond`]), or for a duration or a number below the least
+    /// or above the most ([`SettingsError::BelowTheLeast`], [`SettingsError::AboveTheMost`]);
+    /// the bounds themselves are allowed. A flag and a text have no bounds.
     pub async fn set(&self, name: impl AsRef<str>, value: Value) -> Result<bool, SettingsError> {
         let name = name.as_ref();
-        let default = self
-            .settings
-            .default_of(name)
+        let mut connection = self.settings.pool().acquire().await?;
+        let row = repository::select_default(&mut connection, name)
+            .await?
             .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
+        let default = row.read(name)?;
         if !value.is_of_the_kind_of(&default) {
             return Err(SettingsError::WrongKind {
                 name: name.to_owned(),
@@ -98,7 +105,7 @@ impl TenantScope {
         let json = value
             .to_json()
             .ok_or_else(|| SettingsError::FractionOfASecond(name.to_owned()))?;
-        let mut connection = self.settings.pool().acquire().await?;
+        within_the_bounds(name, &value, row.min, row.max)?;
         repository::upsert_value(&mut connection, self.tenant_id, name, &json).await
     }
 
@@ -158,4 +165,34 @@ impl TenantScope {
             })
             .collect()
     }
+}
+
+/// Refuses a duration or a number below `min` or above `max`, a duration in whole seconds;
+/// `None` is no bound, and a flag or a text has none.
+fn within_the_bounds(
+    name: &str,
+    value: &Value,
+    min: Option<i64>,
+    max: Option<i64>,
+) -> Result<(), SettingsError> {
+    let Some(number) = value.as_bounded() else {
+        return Ok(());
+    };
+    if let Some(min) = min
+        && number < min
+    {
+        return Err(SettingsError::BelowTheLeast {
+            name: name.to_owned(),
+            min: value.bound_like(min),
+        });
+    }
+    if let Some(max) = max
+        && number > max
+    {
+        return Err(SettingsError::AboveTheMost {
+            name: name.to_owned(),
+            max: value.bound_like(max),
+        });
+    }
+    Ok(())
 }

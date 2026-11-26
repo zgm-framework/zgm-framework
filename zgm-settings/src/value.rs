@@ -47,6 +47,30 @@ impl Value {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
+    /// The value as a number to hold against the bounds of its setting: a duration in whole
+    /// seconds, more than a `bigint` holds as the most it holds, the way its bounds are kept;
+    /// `None` for a flag or a text, which have no bounds.
+    pub(crate) fn as_bounded(&self) -> Option<i64> {
+        match self {
+            Value::Duration(duration) => {
+                Some(i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+            }
+            Value::Number(number) => Some(*number),
+            Value::Flag(_) | Value::Text(_) => None,
+        }
+    }
+
+    /// A bound of the table as a value of the kind of `self`: seconds for a duration, below
+    /// zero as none, and the number for a number.
+    pub(crate) fn bound_like(&self, bound: i64) -> Value {
+        match self {
+            Value::Duration(_) => {
+                Value::Duration(Duration::from_secs(u64::try_from(bound).unwrap_or(0)))
+            }
+            _ => Value::Number(bound),
+        }
+    }
+
     /// The value the way it goes into the table, or `None` for a duration with a fraction of
     /// a second, which the table cannot keep.
     pub(crate) fn to_json(&self) -> Option<Json<'_>> {
