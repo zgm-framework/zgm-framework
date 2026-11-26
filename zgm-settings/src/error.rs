@@ -11,8 +11,10 @@ pub enum SettingsError {
     #[error("the migration failed: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
 
-    /// No module gave a default for a setting of this name, so the module does not know the
-    /// setting, nor of which kind its value is. A mistake in the program, not in the data.
+    /// The setting of this name has no default, so the module does not know the setting, nor
+    /// of which kind its value is: [`get`](crate::TenantScope::get) found none in the database,
+    /// and the other functions of a tenant none given since the program started. A mistake in
+    /// the program, not in the data.
     #[error("no default was given for the setting {0}")]
     UnknownSetting(String),
 

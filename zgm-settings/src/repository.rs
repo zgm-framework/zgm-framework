@@ -6,12 +6,24 @@ use uuid::Uuid;
 use crate::error::SettingsError;
 use crate::value::Json;
 
-/// The columns a [`StoredValue`] is read from, the same in every query that reads one. `#>>
-/// '{}'` gives SQL NULL for a JSON null, which is no kind the module knows either, so it
-/// becomes the text `null`.
+/// The columns a [`StoredValue`] is read from, the same in every query that reads one, of
+/// the column `value` with the given prefix of its table, e.g. `"d."`. `#>> '{}'` gives SQL
+/// NULL for a JSON null, which is no kind the module knows either, so it becomes the text
+/// `null`.
 macro_rules! stored_value_columns {
     () => {
-        "jsonb_typeof(value), coalesce(value #>> '{}', 'null'), value::text"
+        stored_value_columns!("")
+    };
+    ($table:literal) => {
+        concat!(
+            "jsonb_typeof(",
+            $table,
+            "value), coalesce(",
+            $table,
+            "value #>> '{}', 'null'), ",
+            $table,
+            "value::text"
+        )
     };
 }
 
@@ -89,26 +101,56 @@ pub(crate) async fn select_default(
     }))
 }
 
-/// The value one tenant set for one setting, or `None` when the tenant has no row for it.
-pub(crate) async fn select_value(
+/// A setting in one tenant: the kind and the value of its default, and the value the tenant
+/// set, if it set one; `None` when the setting has no default. One statement reads both, through
+/// the primary key of each table.
+pub(crate) async fn select_setting(
     connection: &mut PgConnection,
     tenant_id: Uuid,
     name: &str,
-) -> Result<Option<StoredValue>, SettingsError> {
-    let row: Option<(String, String, String)> = sqlx::query_as(concat!(
-        "SELECT ",
-        stored_value_columns!(),
-        " FROM zgm_settings.tenant_settings WHERE tenant_id = $1 AND name = $2"
+) -> Result<Option<(String, StoredValue, Option<StoredValue>)>, SettingsError> {
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let row: Option<Row> = sqlx::query_as(concat!(
+        "SELECT d.kind, ",
+        stored_value_columns!("d."),
+        ", ",
+        stored_value_columns!("t."),
+        " FROM zgm_settings.default_settings d \
+         LEFT JOIN zgm_settings.tenant_settings t ON t.tenant_id = $1 AND t.name = d.name \
+         WHERE d.name = $2"
     ))
     .bind(tenant_id)
     .bind(name)
     .fetch_optional(connection)
     .await?;
-    Ok(row.map(|(json_type, text, json)| StoredValue {
-        json_type,
-        text,
-        json,
-    }))
+    Ok(row.map(
+        |(kind, json_type, text, json, of_the_tenant_type, of_the_tenant_text, of_the_tenant)| {
+            let default = StoredValue {
+                json_type,
+                text,
+                json,
+            };
+            // Without a row of the tenant every column of it is NULL, but `coalesce` makes its
+            // text `null`; the JSON itself is NULL only then.
+            let of_the_tenant = match (of_the_tenant_type, of_the_tenant_text, of_the_tenant) {
+                (Some(json_type), Some(text), Some(json)) => Some(StoredValue {
+                    json_type,
+                    text,
+                    json,
+                }),
+                _ => None,
+            };
+            (kind, default, of_the_tenant)
+        },
+    ))
 }
 
 /// Writes the value of a setting of a tenant, or changes the one it had, and says whether

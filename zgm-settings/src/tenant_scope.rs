@@ -37,20 +37,30 @@ impl TenantScope {
     }
 
     /// The value of a setting in the tenant: the one the tenant set, or, when it set none, the
-    /// default a module gave.
+    /// default. Both are read from the database every time, in one statement, so a default
+    /// changed there is seen at once, by every copy of the program.
     ///
-    /// A name no module gave a default for is [`SettingsError::UnknownSetting`], also when the
-    /// tenant has a row of that name, and the database is not asked. A row with a value of
-    /// another kind than the default, which only SQL written by hand can write, is
-    /// [`SettingsError::WrongKind`], not the default.
+    /// The value of the tenant is given as it is, also when it lies outside the bounds of the
+    /// default: the bounds hold for the values set after they were.
+    ///
+    /// A name without a default in the database is [`SettingsError::UnknownSetting`]. A row the
+    /// module cannot read, which only SQL written by hand can write, is an error, not the
+    /// default: [`SettingsError::UnreadableDefault`] for the row of the default, and
+    /// [`SettingsError::WrongKind`] for a value of the tenant of another kind than the default.
     pub async fn get(&self, name: impl AsRef<str>) -> Result<Value, SettingsError> {
         let name = name.as_ref();
-        let default = self
-            .settings
-            .default_of(name)
-            .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
         let mut connection = self.settings.pool().acquire().await?;
-        match repository::select_value(&mut connection, self.tenant_id, name).await? {
+        let (kind, default, of_the_tenant) =
+            repository::select_setting(&mut connection, self.tenant_id, name)
+                .await?
+                .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
+        let default =
+            Value::read_as(&kind, &default).ok_or_else(|| SettingsError::UnreadableDefault {
+                name: name.to_owned(),
+                kind,
+                found: default.json.clone(),
+            })?;
+        match of_the_tenant {
             None => Ok(default),
             Some(stored) => default
                 .read_like(&stored)

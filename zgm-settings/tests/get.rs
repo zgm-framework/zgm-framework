@@ -1,9 +1,10 @@
-//! `get`: the value of a setting in one tenant, from its row or, without one, the default.
+//! `get`: the value of a setting in one tenant, from its row or, without one, the default,
+//! both read from the database every time.
 
 mod common;
 
 use sqlx::{AssertSqlSafe, PgPool};
-use zgm_settings::{SettingsError, Value};
+use zgm_settings::{Settings, SettingsError, Value};
 
 use common::{IamSetting, KOWALSKI, NOWAK, days, default_by_hand, set_by_hand, settings_on};
 
@@ -100,24 +101,140 @@ async fn a_change_of_the_row_is_seen_by_the_next_read(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = false)]
-async fn a_name_without_a_default_is_an_error_with_a_row_and_without(pool: PgPool) {
+async fn a_name_without_a_default_in_the_database_is_an_error(pool: PgPool) {
     let settings = settings_on(&pool).await;
-    let in_nowak = settings.tenant_id(NOWAK);
 
-    let without_a_row = in_nowak.get("iam.unknown").await.unwrap_err();
+    let refused = settings
+        .tenant_id(NOWAK)
+        .get("iam.unknown")
+        .await
+        .unwrap_err();
+
     assert!(
-        matches!(&without_a_row, SettingsError::UnknownSetting(name) if name == "iam.unknown"),
-        "{without_a_row}"
+        matches!(&refused, SettingsError::UnknownSetting(name) if name == "iam.unknown"),
+        "{refused}"
     );
+}
 
+#[sqlx::test(migrations = false)]
+async fn a_setting_this_program_did_not_give_is_read_from_the_database(pool: PgPool) {
+    let settings = settings_on(&pool).await;
     // A default an earlier version of the module left, which this one no longer gives.
-    default_by_hand(&pool, "iam.unknown", "duration", "2592000").await;
-    set_by_hand(&pool, NOWAK, "iam.unknown", "7776000").await;
-    let with_a_row = in_nowak.get("iam.unknown").await.unwrap_err();
-    assert!(
-        matches!(&with_a_row, SettingsError::UnknownSetting(name) if name == "iam.unknown"),
-        "{with_a_row}"
+    default_by_hand(&pool, "iam.dropped_setting", "duration", "2592000").await;
+    set_by_hand(&pool, NOWAK, "iam.dropped_setting", "7776000").await;
+
+    assert_eq!(
+        settings
+            .tenant_id(NOWAK)
+            .get("iam.dropped_setting")
+            .await
+            .unwrap(),
+        days(90)
     );
+    assert_eq!(
+        settings
+            .tenant_id(KOWALSKI)
+            .get("iam.dropped_setting")
+            .await
+            .unwrap(),
+        days(30)
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn another_copy_of_the_program_reads_the_defaults_without_giving_them(pool: PgPool) {
+    settings_on(&pool).await;
+    // A copy that has given no default, e.g. one that started while another gave them.
+    let another_copy = Settings::builder().pool(pool.clone()).build();
+
+    assert_eq!(
+        another_copy
+            .tenant_id(KOWALSKI)
+            .get(IamSetting::UserDeletionWindow)
+            .await
+            .unwrap(),
+        days(30)
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_change_of_the_default_is_seen_by_the_next_read(pool: PgPool) {
+    let settings = settings_on(&pool).await;
+    let in_kowalski = settings.tenant_id(KOWALSKI);
+    assert_eq!(
+        in_kowalski
+            .get(IamSetting::UserDeletionWindow)
+            .await
+            .unwrap(),
+        days(30)
+    );
+
+    // 45 days, as the function that changes a default will write it.
+    sqlx::query("UPDATE zgm_settings.default_settings SET value = '3888000' WHERE name = $1")
+        .bind(IamSetting::UserDeletionWindow.as_ref())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        in_kowalski
+            .get(IamSetting::UserDeletionWindow)
+            .await
+            .unwrap(),
+        days(45)
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_value_above_a_most_lowered_after_it_was_set_stays_the_value_of_the_tenant(pool: PgPool) {
+    let settings = settings_on(&pool).await;
+    set_by_hand(&pool, NOWAK, IamSetting::UserDeletionWindow, "7776000").await;
+
+    // The most lowered to 60 days after Nowak set 90: it holds for changes from now on.
+    sqlx::query("UPDATE zgm_settings.default_settings SET max = 5184000 WHERE name = $1")
+        .bind(IamSetting::UserDeletionWindow.as_ref())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        settings
+            .tenant_id(NOWAK)
+            .get(IamSetting::UserDeletionWindow)
+            .await
+            .unwrap(),
+        days(90)
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_default_the_module_cannot_read_is_an_error_with_a_row_and_without(pool: PgPool) {
+    let settings = settings_on(&pool).await;
+    // A row only SQL by hand can write.
+    default_by_hand(&pool, "iam.colour", "colour", r#""blue""#).await;
+
+    let without_a_row = settings
+        .tenant_id(KOWALSKI)
+        .get("iam.colour")
+        .await
+        .unwrap_err();
+    set_by_hand(&pool, NOWAK, "iam.colour", r#""red""#).await;
+    let with_a_row = settings
+        .tenant_id(NOWAK)
+        .get("iam.colour")
+        .await
+        .unwrap_err();
+
+    for refused in [without_a_row, with_a_row] {
+        assert!(
+            matches!(
+                &refused,
+                SettingsError::UnreadableDefault { name, kind, found }
+                    if name == "iam.colour" && kind == "colour" && found == r#""blue""#
+            ),
+            "{refused}"
+        );
+    }
 }
 
 #[sqlx::test(migrations = false)]
