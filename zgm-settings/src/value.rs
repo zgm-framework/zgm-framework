@@ -71,6 +71,13 @@ impl Value {
         }
     }
 
+    /// A bound of the table as a value of the kind of `self`, for a list of settings: `None`
+    /// for no bound, and always for a flag or a text, which have none.
+    pub(crate) fn bound_of(&self, bound: Option<i64>) -> Option<Value> {
+        self.as_bounded()?;
+        bound.map(|bound| self.bound_like(bound))
+    }
+
     /// The value the way it goes into the table, or `None` for a duration with a fraction of
     /// a second, which the table cannot keep.
     pub(crate) fn to_json(&self) -> Option<Json<'_>> {

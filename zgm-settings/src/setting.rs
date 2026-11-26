@@ -15,4 +15,10 @@ pub struct Setting {
     pub default: Value,
     /// Whether the tenant has a value of its own, also one equal to the default.
     pub overridden: bool,
+    /// The least a tenant may set, of the kind of the setting, or `None` for no bound. A flag
+    /// and a text have none.
+    pub min: Option<Value>,
+    /// The most a tenant may set, of the kind of the setting, or `None` for no bound. A flag
+    /// and a text have none.
+    pub max: Option<Value>,
 }

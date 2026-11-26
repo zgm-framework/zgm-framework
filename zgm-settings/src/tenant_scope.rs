@@ -1,11 +1,9 @@
 //! What the module does within one tenant.
 
-use std::collections::HashMap;
-
 use uuid::Uuid;
 
 use crate::error::SettingsError;
-use crate::repository::{self, StoredValue};
+use crate::repository;
 use crate::setting::Setting;
 use crate::settings::Settings;
 use crate::value::Value;
@@ -130,42 +128,43 @@ impl TenantScope {
         Ok(deleted)
     }
 
-    /// All the settings of the tenant, in the order of their names: every setting a module
-    /// gave a default for, with its value in the tenant, the default, and whether the tenant
-    /// has a value of its own. One query reads all the rows of the tenant.
+    /// All the settings of the tenant, in the order of their names: every default in the
+    /// database, also of settings this program did not give, with its value in the tenant, the
+    /// default, whether the tenant has a value of its own, and the bounds. One statement reads
+    /// the defaults and the rows of the tenant, at every call.
     ///
-    /// The row of a name no module gives a default for is left out. A row with a value of
-    /// another kind than the default, which only SQL written by hand can write, makes the
-    /// whole list [`SettingsError::WrongKind`], as in [`get`](Self::get).
+    /// The value of the tenant is given as it is, also outside the bounds, as in
+    /// [`get`](Self::get). A row the module cannot read, which only SQL written by hand can
+    /// write, makes the whole list an error: [`SettingsError::UnreadableDefault`] for a
+    /// default, [`SettingsError::WrongKind`] for a value of the tenant.
     pub async fn list(&self) -> Result<Vec<Setting>, SettingsError> {
-        let defaults = self.settings.defaults();
         let mut connection = self.settings.pool().acquire().await?;
-        let mut rows: HashMap<String, StoredValue> =
-            repository::select_values(&mut connection, self.tenant_id)
-                .await?
-                .into_iter()
-                .collect();
-        defaults
+        repository::select_settings(&mut connection, self.tenant_id)
+            .await?
             .into_iter()
-            .map(|(name, default)| match rows.remove(&name) {
-                None => Ok(Setting {
+            .map(|(name, row, of_the_tenant)| {
+                let default = row.read(&name)?;
+                let (min, max) = (default.bound_of(row.min), default.bound_of(row.max));
+                let (value, overridden) = match of_the_tenant {
+                    None => (default.clone(), false),
+                    Some(stored) => match default.read_like(&stored) {
+                        Some(value) => (value, true),
+                        None => {
+                            return Err(SettingsError::WrongKind {
+                                name,
+                                found: stored.json,
+                            });
+                        }
+                    },
+                };
+                Ok(Setting {
                     name,
-                    value: default.clone(),
+                    value,
                     default,
-                    overridden: false,
-                }),
-                Some(stored) => match default.read_like(&stored) {
-                    Some(value) => Ok(Setting {
-                        name,
-                        value,
-                        default,
-                        overridden: true,
-                    }),
-                    None => Err(SettingsError::WrongKind {
-                        name,
-                        found: stored.json,
-                    }),
-                },
+                    overridden,
+                    min,
+                    max,
+                })
             })
             .collect()
     }

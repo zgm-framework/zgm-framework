@@ -1,5 +1,6 @@
 //! The defaults the modules give to [`Settings`] when they start: written to the database
 //! once, and after that left as they are, whatever a later version of a module gives.
+//! `defaults` reads them from the database.
 
 mod common;
 
@@ -57,9 +58,33 @@ fn settings_without_a_database() -> Settings {
     Settings::builder().pool(pool).build()
 }
 
-#[tokio::test]
-async fn new_settings_have_no_defaults() {
-    assert_eq!(settings_without_a_database().defaults(), BTreeMap::new());
+#[sqlx::test(migrations = false)]
+async fn a_database_without_defaults_has_none(pool: PgPool) {
+    assert_eq!(
+        settings_on(&pool).await.defaults().await.unwrap(),
+        BTreeMap::new()
+    );
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_copy_of_the_program_that_gave_no_default_reads_them_all(pool: PgPool) {
+    let settings = settings_on(&pool).await;
+    settings
+        .add_default(WINDOW, window(DAY * 30, None, None))
+        .await
+        .unwrap();
+    // A default an earlier version of a module left, which no module gives now.
+    default_by_hand(&pool, "iam.dropped_setting", "flag", "true").await;
+
+    let another_copy = Settings::builder().pool(pool.clone()).build();
+
+    assert_eq!(
+        another_copy.defaults().await.unwrap(),
+        BTreeMap::from([
+            ("iam.dropped_setting".to_owned(), Value::Flag(true)),
+            ("iam.user_deletion_window".to_owned(), days(30)),
+        ])
+    );
 }
 
 #[sqlx::test(migrations = false)]
@@ -113,7 +138,7 @@ async fn the_first_default_of_a_setting_is_written_with_its_kind_and_its_bounds(
         row("text", "\"Welcome\"", None, None)
     );
     assert_eq!(
-        settings.defaults(),
+        settings.defaults().await.unwrap(),
         BTreeMap::from([
             ("iam.max_users".to_owned(), Value::Number(10)),
             ("iam.self_sign_up".to_owned(), Value::Flag(false)),
@@ -146,7 +171,7 @@ async fn a_default_given_again_leaves_the_row_as_it_was(pool: PgPool) {
     );
     assert!(!changed_after_written(&pool, WINDOW).await);
     assert_eq!(
-        settings.defaults(),
+        settings.defaults().await.unwrap(),
         BTreeMap::from([("iam.user_deletion_window".to_owned(), days(30))])
     );
 }
@@ -168,7 +193,7 @@ async fn the_next_version_of_a_module_gets_the_default_the_database_has(pool: Pg
 
     assert!(!written);
     assert_eq!(
-        next_version.defaults(),
+        next_version.defaults().await.unwrap(),
         BTreeMap::from([("iam.user_deletion_window".to_owned(), days(30))])
     );
     assert_eq!(
@@ -191,7 +216,7 @@ async fn a_default_changed_in_the_database_is_the_one_the_module_gets(pool: PgPo
 
     assert!(!written);
     assert_eq!(
-        settings.defaults(),
+        settings.defaults().await.unwrap(),
         BTreeMap::from([("iam.user_deletion_window".to_owned(), days(90))])
     );
 }
@@ -222,7 +247,7 @@ async fn a_default_of_another_kind_given_again_leaves_the_row_of_the_first_kind(
         row("duration", "2592000", None, None)
     );
     assert_eq!(
-        settings.defaults(),
+        settings.defaults().await.unwrap(),
         BTreeMap::from([("iam.user_deletion_window".to_owned(), days(30))])
     );
 }
@@ -309,7 +334,7 @@ async fn a_fraction_of_a_second_is_cut_off(pool: PgPool) {
         row("duration", "1", Some(0), Some(2))
     );
     assert_eq!(
-        settings.defaults(),
+        settings.defaults().await.unwrap(),
         BTreeMap::from([(
             "iam.user_deletion_window".to_owned(),
             Value::Duration(Duration::from_secs(1))
@@ -356,7 +381,7 @@ async fn a_bound_of_more_seconds_than_a_bigint_holds_is_written_as_the_most_it_h
         row("duration", "0", Some(0), Some(i64::MAX))
     );
     assert_eq!(
-        settings.defaults()["iam.user_deletion_window"],
+        settings.defaults().await.unwrap()["iam.user_deletion_window"],
         Value::Duration(Duration::from_secs(u64::MAX))
     );
 }
@@ -398,7 +423,7 @@ async fn the_least_and_the_greatest_number_are_kept(pool: PgPool) {
         )
     );
     assert_eq!(
-        settings.defaults(),
+        settings.defaults().await.unwrap(),
         BTreeMap::from([
             ("iam.greatest".to_owned(), Value::Number(i64::MAX)),
             ("iam.least".to_owned(), Value::Number(i64::MIN)),
@@ -434,7 +459,7 @@ async fn a_text_is_kept_exactly_as_it_was_given(pool: PgPool) {
 
     for (number, text) in texts.iter().enumerate() {
         assert_eq!(
-            settings.defaults()[&format!("iam.text_{number}")],
+            settings.defaults().await.unwrap()[&format!("iam.text_{number}")],
             Value::Text((*text).to_owned()),
             "{text}"
         );
@@ -442,7 +467,7 @@ async fn a_text_is_kept_exactly_as_it_was_given(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = false)]
-async fn a_text_with_a_nul_character_is_an_error_and_nothing_is_kept(pool: PgPool) {
+async fn a_text_with_a_nul_character_is_an_error_and_nothing_is_written(pool: PgPool) {
     let settings = settings_on(&pool).await;
 
     // PostgreSQL keeps no NUL in a text.
@@ -456,7 +481,7 @@ async fn a_text_with_a_nul_character_is_an_error_and_nothing_is_kept(pool: PgPoo
 
     assert!(matches!(refused, SettingsError::Database(_)), "{refused}");
     assert_eq!(default_row(&pool, IamSetting::WelcomeText).await, None);
-    assert_eq!(settings.defaults(), BTreeMap::new());
+    assert_eq!(settings.defaults().await.unwrap(), BTreeMap::new());
 }
 
 #[sqlx::test(migrations = false)]
@@ -497,7 +522,7 @@ async fn the_defaults_of_several_modules_are_all_there_in_the_order_of_their_nam
             .unwrap();
     }
 
-    let names: Vec<String> = settings.defaults().into_keys().collect();
+    let names: Vec<String> = settings.defaults().await.unwrap().into_keys().collect();
     assert_eq!(
         names,
         [
@@ -522,7 +547,7 @@ async fn a_clone_sees_the_defaults_given_through_another_clone(pool: PgPool) {
         .unwrap();
 
     assert_eq!(
-        of_the_program.defaults(),
+        of_the_program.defaults().await.unwrap(),
         BTreeMap::from([("iam.user_deletion_window".to_owned(), days(30))])
     );
 }
@@ -551,7 +576,7 @@ async fn two_copies_of_the_program_giving_a_default_at_once_write_it_once(pool: 
     let in_the_database = if first { days(30) } else { days(14) };
     for copy in &copies {
         assert_eq!(
-            copy.defaults(),
+            copy.defaults().await.unwrap(),
             BTreeMap::from([(
                 "iam.user_deletion_window".to_owned(),
                 in_the_database.clone()
@@ -561,7 +586,7 @@ async fn two_copies_of_the_program_giving_a_default_at_once_write_it_once(pool: 
 }
 
 #[tokio::test]
-async fn when_the_database_does_not_answer_it_is_an_error_and_nothing_is_kept() {
+async fn when_the_database_does_not_answer_it_is_an_error() {
     let settings = settings_without_a_database();
 
     let refused = settings
@@ -570,11 +595,14 @@ async fn when_the_database_does_not_answer_it_is_an_error_and_nothing_is_kept() 
         .unwrap_err();
 
     assert!(matches!(refused, SettingsError::Database(_)), "{refused}");
-    assert_eq!(settings.defaults(), BTreeMap::new());
+    assert!(matches!(
+        settings.defaults().await.unwrap_err(),
+        SettingsError::Database(_)
+    ));
 }
 
 #[sqlx::test(migrations = false)]
-async fn without_the_migration_it_is_an_error_and_nothing_is_kept(pool: PgPool) {
+async fn without_the_migration_it_is_an_error(pool: PgPool) {
     let settings = Settings::builder().pool(pool.clone()).build();
 
     let refused = settings
@@ -583,57 +611,43 @@ async fn without_the_migration_it_is_an_error_and_nothing_is_kept(pool: PgPool) 
         .unwrap_err();
 
     assert!(matches!(refused, SettingsError::Database(_)), "{refused}");
-    assert_eq!(settings.defaults(), BTreeMap::new());
+    assert!(matches!(
+        settings.defaults().await.unwrap_err(),
+        SettingsError::Database(_)
+    ));
 }
 
 #[sqlx::test(migrations = false)]
-async fn a_row_of_a_default_the_module_cannot_read_is_an_error_and_stays(pool: PgPool) {
+async fn a_row_of_a_default_the_module_cannot_read_stays_and_reading_it_is_an_error(pool: PgPool) {
     zgm_settings::migrate(&pool).await.unwrap();
     // Rows only SQL by hand can write.
     let rows = [
-        (
-            "iam.colour",
-            "colour",
-            "\"blue\"",
-            DefaultSetting::Flag(true),
-        ),
-        (
-            "iam.thirty",
-            "duration",
-            "\"thirty days\"",
-            window(DAY * 30, None, None),
-        ),
-        (
-            "iam.backwards",
-            "duration",
-            "-5",
-            window(DAY * 30, None, None),
-        ),
-        (
-            "iam.a_fraction",
-            "duration",
-            "1.5",
-            window(DAY * 30, None, None),
-        ),
-        ("iam.nothing", "flag", "null", DefaultSetting::Flag(true)),
-        (
-            "iam.a_count",
-            "number",
-            "true",
-            DefaultSetting::Number {
-                value: 1,
-                min: None,
-                max: None,
-            },
-        ),
+        ("iam.colour", "colour", "\"blue\""),
+        ("iam.thirty", "duration", "\"thirty days\""),
+        ("iam.backwards", "duration", "-5"),
+        ("iam.a_fraction", "duration", "1.5"),
+        ("iam.nothing", "flag", "null"),
+        ("iam.a_count", "number", "true"),
     ];
-    for (name, kind, json, _) in &rows {
-        default_by_hand(&pool, name, kind, json).await;
-    }
     let settings = Settings::builder().pool(pool.clone()).build();
 
-    for (name, kind, json, default) in rows {
-        let refused = settings.add_default(name, default).await.unwrap_err();
+    for (name, kind, json) in rows {
+        default_by_hand(&pool, name, kind, json).await;
+        // Giving the default again leaves the row, as for any row there.
+        assert!(
+            !settings
+                .add_default(name, DefaultSetting::Flag(true))
+                .await
+                .unwrap(),
+            "{name}"
+        );
+        assert_eq!(
+            default_row(&pool, name).await.map(|(_, json, _, _)| json),
+            Some(json.to_owned()),
+            "{name}"
+        );
+        // Reading the defaults fails on the row, and says which.
+        let refused = settings.defaults().await.unwrap_err();
         assert!(
             matches!(
                 &refused,
@@ -642,11 +656,10 @@ async fn a_row_of_a_default_the_module_cannot_read_is_an_error_and_stays(pool: P
             ),
             "{name}: {refused}"
         );
-        assert_eq!(
-            default_row(&pool, name).await.map(|(_, json, _, _)| json),
-            Some(json.to_owned()),
-            "{name}"
-        );
+        sqlx::query("DELETE FROM zgm_settings.default_settings WHERE name = $1")
+            .bind(name)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
-    assert_eq!(settings.defaults(), BTreeMap::new());
 }

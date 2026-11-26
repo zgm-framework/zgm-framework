@@ -127,6 +127,24 @@ pub(crate) async fn select_default(
     )
 }
 
+/// The value of a tenant from the columns of a `LEFT JOIN`, or `None` without a row. Without a
+/// row every column of it is NULL, but `coalesce` makes its text `null`; the JSON itself is
+/// NULL only then.
+fn stored_of_the_tenant(
+    json_type: Option<String>,
+    text: Option<String>,
+    json: Option<String>,
+) -> Option<StoredValue> {
+    match (json_type, text, json) {
+        (Some(json_type), Some(text), Some(json)) => Some(StoredValue {
+            json_type,
+            text,
+            json,
+        }),
+        _ => None,
+    }
+}
+
 /// A setting in one tenant: the kind and the value of its default, and the value the tenant
 /// set, if it set one; `None` when the setting has no default. One statement reads both, through
 /// the primary key of each table.
@@ -164,16 +182,8 @@ pub(crate) async fn select_setting(
                 text,
                 json,
             };
-            // Without a row of the tenant every column of it is NULL, but `coalesce` makes its
-            // text `null`; the JSON itself is NULL only then.
-            let of_the_tenant = match (of_the_tenant_type, of_the_tenant_text, of_the_tenant) {
-                (Some(json_type), Some(text), Some(json)) => Some(StoredValue {
-                    json_type,
-                    text,
-                    json,
-                }),
-                _ => None,
-            };
+            let of_the_tenant =
+                stored_of_the_tenant(of_the_tenant_type, of_the_tenant_text, of_the_tenant);
             (kind, default, of_the_tenant)
         },
     ))
@@ -226,31 +236,102 @@ pub(crate) async fn delete_value(
     Ok(answer)
 }
 
-/// All the values one tenant set, by the names of their settings, read through the primary
-/// key, whose first column is the tenant.
-pub(crate) async fn select_values(
+/// The columns of a row of the defaults read into a [`DefaultRow`], after its name, with the
+/// prefix `d.` of the table.
+macro_rules! default_row_columns {
+    () => {
+        concat!(
+            "d.name, d.kind, ",
+            stored_value_columns!("d."),
+            ", d.min, d.max"
+        )
+    };
+}
+
+/// A row of the defaults as it is read, after its name.
+type DefaultColumns = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<i64>,
+    Option<i64>,
+);
+
+impl DefaultRow {
+    fn from_columns(
+        (name, kind, json_type, text, json, min, max): DefaultColumns,
+    ) -> (String, DefaultRow) {
+        (
+            name,
+            DefaultRow {
+                kind,
+                value: StoredValue {
+                    json_type,
+                    text,
+                    json,
+                },
+                min,
+                max,
+            },
+        )
+    }
+}
+
+/// Every row of the defaults, in no order.
+pub(crate) async fn select_defaults(
+    connection: &mut PgConnection,
+) -> Result<Vec<(String, DefaultRow)>, SettingsError> {
+    let rows: Vec<DefaultColumns> = sqlx::query_as(concat!(
+        "SELECT ",
+        default_row_columns!(),
+        " FROM zgm_settings.default_settings d"
+    ))
+    .fetch_all(connection)
+    .await?;
+    Ok(rows.into_iter().map(DefaultRow::from_columns).collect())
+}
+
+/// Every row of the defaults with the row of one tenant, if it has one, in the order of the
+/// bytes of the names, as Rust orders text, not in the collation of the database; one
+/// statement, the rows of the tenant found through the primary key.
+pub(crate) async fn select_settings(
     connection: &mut PgConnection,
     tenant_id: Uuid,
-) -> Result<Vec<(String, StoredValue)>, SettingsError> {
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(concat!(
-        "SELECT name, ",
-        stored_value_columns!(),
-        " FROM zgm_settings.tenant_settings WHERE tenant_id = $1"
+) -> Result<Vec<(String, DefaultRow, Option<StoredValue>)>, SettingsError> {
+    type Row = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let rows: Vec<Row> = sqlx::query_as(concat!(
+        "SELECT ",
+        default_row_columns!(),
+        ", ",
+        stored_value_columns!("t."),
+        " FROM zgm_settings.default_settings d \
+         LEFT JOIN zgm_settings.tenant_settings t ON t.tenant_id = $1 AND t.name = d.name \
+         ORDER BY d.name COLLATE \"C\""
     ))
     .bind(tenant_id)
     .fetch_all(connection)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(name, json_type, text, json)| {
-            (
-                name,
-                StoredValue {
-                    json_type,
-                    text,
-                    json,
-                },
-            )
-        })
+        .map(
+            |(name, kind, json_type, text, json, min, max, of_type, of_text, of_json)| {
+                let (name, row) =
+                    DefaultRow::from_columns((name, kind, json_type, text, json, min, max));
+                (name, row, stored_of_the_tenant(of_type, of_text, of_json))
+            },
+        )
         .collect())
 }

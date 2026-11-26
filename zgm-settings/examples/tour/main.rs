@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _iam = ExampleIam::start(&settings).await?;
 
     println!("The defaults in the database:");
-    for (name, value) in settings.defaults() {
+    for (name, value) in settings.defaults().await? {
         println!("  {name} = {}", shown(&value));
     }
 

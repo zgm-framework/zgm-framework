@@ -95,7 +95,7 @@ async fn many_copies_starting_at_once_write_every_default_once(pool: PgPool) {
         })
         .collect();
     for copy in &copies {
-        assert_eq!(copy.defaults(), in_the_database);
+        assert_eq!(copy.defaults().await.unwrap(), in_the_database);
     }
 }
 
@@ -127,7 +127,7 @@ async fn many_defaults_given_at_once_through_clones_are_all_written(pool: PgPool
             )
         })
         .collect();
-    assert_eq!(settings.defaults(), expected);
+    assert_eq!(settings.defaults().await.unwrap(), expected);
 }
 
 #[sqlx::test(migrations = false)]
@@ -157,7 +157,7 @@ async fn many_starts_one_after_another_leave_every_row_as_the_first_wrote_it(poo
                 )
             })
             .collect();
-        assert_eq!(settings.defaults(), first, "start {start}");
+        assert_eq!(settings.defaults().await.unwrap(), first, "start {start}");
     }
 
     let untouched: bool = sqlx::query_scalar(
