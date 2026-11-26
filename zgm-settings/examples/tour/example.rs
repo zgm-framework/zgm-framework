@@ -1,10 +1,10 @@
 //! The side of a module that has settings, the way `zgm-iam` will have them: an enum of its
 //! settings, named through `strum` with the prefix of the module, and the defaults it gives
-//! when it is built. And how a screen of a program might show a value.
+//! when it starts. And how a screen of a program might show a value.
 
 use std::time::Duration;
 
-use zgm_settings::{Settings, Value};
+use zgm_settings::{DefaultSetting, Settings, SettingsError, Value};
 
 /// The settings of the module, one of every kind of [`Value`]. `strum` makes the name: the
 /// prefix of the module, then the variant in snake case, e.g. `iam.user_deletion_window`.
@@ -27,17 +27,39 @@ pub fn days(count: u64) -> Duration {
     Duration::from_secs(count * DAY)
 }
 
-/// A module with settings. It gives its defaults when it is built; a program that wants
-/// other defaults for every company would say so in the module's builder.
+/// A module with settings. It gives its defaults when it starts: the first start writes them
+/// to the database, and a later one, also of a version with other numbers, leaves them there.
 pub struct ExampleIam;
 
 impl ExampleIam {
-    pub fn build(settings: &Settings) -> Self {
-        settings.add_default(IamSetting::UserDeletionWindow, Value::Duration(days(30)));
-        settings.add_default(IamSetting::MaxUsers, Value::Number(10));
-        settings.add_default(IamSetting::SelfSignUp, Value::Flag(false));
-        settings.add_default(IamSetting::WelcomeText, Value::Text("Welcome".to_owned()));
-        Self
+    pub async fn start(settings: &Settings) -> Result<Self, SettingsError> {
+        let defaults = [
+            (
+                IamSetting::UserDeletionWindow,
+                DefaultSetting::Duration {
+                    value: days(30),
+                    min: Some(days(1)),
+                    max: Some(days(365)),
+                },
+            ),
+            (
+                IamSetting::MaxUsers,
+                DefaultSetting::Number {
+                    value: 10,
+                    min: Some(1),
+                    max: None,
+                },
+            ),
+            (IamSetting::SelfSignUp, DefaultSetting::Flag(false)),
+            (
+                IamSetting::WelcomeText,
+                DefaultSetting::Text("Welcome".to_owned()),
+            ),
+        ];
+        for (setting, default) in defaults {
+            settings.add_default(setting, default).await?;
+        }
+        Ok(Self)
     }
 }
 

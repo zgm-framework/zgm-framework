@@ -26,10 +26,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     zgm_settings::migrate(&pool).await?;
 
     let settings = Settings::builder().pool(pool.clone()).build();
-    // A module with settings gives its defaults when it is built. They stay in memory.
-    let _iam = ExampleIam::build(&settings);
+    // A module with settings gives its defaults when it starts. The first start writes them
+    // to the database; a later one finds them there and leaves them.
+    let _iam = ExampleIam::start(&settings).await?;
 
-    println!("The defaults the modules gave:");
+    println!("The defaults in the database:");
     for (name, value) in settings.defaults() {
         println!("  {name} = {}", shown(&value));
     }

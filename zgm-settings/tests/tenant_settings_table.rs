@@ -1,5 +1,4 @@
-//! What the table `zgm_settings.tenant_settings` itself guarantees, checked with SQL by hand:
-//! no function of the module writes it yet.
+//! What the table `zgm_settings.tenant_settings` itself guarantees, checked with SQL by hand.
 
 use sqlx::error::ErrorKind;
 use sqlx::{AssertSqlSafe, PgPool};
@@ -38,13 +37,48 @@ async fn count(pool: &PgPool) -> i64 {
         .unwrap()
 }
 
+/// The settings the tests of this file write for tenants.
+const WITH_A_DEFAULT: [&str; 6] = [
+    WINDOW,
+    "iam.tenant_deletion_window",
+    "iam.a_number",
+    "iam.a_flag",
+    "iam.a_text",
+    "limits.a_rule",
+];
+
+/// Migrates, and writes a default for each of [`WITH_A_DEFAULT`] with SQL by hand: a row of a
+/// tenant needs the default of its setting.
+async fn migrate_with_defaults(pool: &PgPool) {
+    zgm_settings::migrate(pool).await.unwrap();
+    for name in WITH_A_DEFAULT {
+        sqlx::query(
+            "INSERT INTO zgm_settings.default_settings (name, kind, value) \
+             VALUES ($1, 'duration', '2592000')",
+        )
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// Deletes the default of a setting with SQL by hand.
+async fn delete_default(pool: &PgPool, name: &str) -> Result<u64, sqlx::Error> {
+    sqlx::query("DELETE FROM zgm_settings.default_settings WHERE name = $1")
+        .bind(name)
+        .execute(pool)
+        .await
+        .map(|deleted| deleted.rows_affected())
+}
+
 fn kind_of(error: &sqlx::Error) -> Option<ErrorKind> {
     error.as_database_error().map(|error| error.kind())
 }
 
 #[sqlx::test(migrations = false)]
 async fn a_new_row_gets_the_moment_of_its_statement_as_both_dates(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     // In a transaction that began earlier: the dates are the moment of the statement, not of
     // the start of the transaction.
@@ -69,7 +103,7 @@ async fn a_new_row_gets_the_moment_of_its_statement_as_both_dates(pool: PgPool) 
 
 #[sqlx::test(migrations = false)]
 async fn a_change_sets_updated_at_to_the_moment_of_the_change(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     let mut transaction = pool.begin().await.unwrap();
     sqlx::query(
@@ -101,7 +135,7 @@ async fn a_change_sets_updated_at_to_the_moment_of_the_change(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn the_same_setting_twice_in_one_tenant_is_refused(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
     insert(&pool, NOWAK, WINDOW, "7776000").await.unwrap();
 
     let refused = insert(&pool, NOWAK, WINDOW, "1209600").await.unwrap_err();
@@ -124,7 +158,7 @@ async fn the_same_setting_twice_in_one_tenant_is_refused(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn the_same_setting_in_two_tenants_is_two_rows(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     insert(&pool, NOWAK, WINDOW, "7776000").await.unwrap();
     insert(&pool, KOWALSKI, WINDOW, "1209600").await.unwrap();
@@ -134,7 +168,7 @@ async fn the_same_setting_in_two_tenants_is_two_rows(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn two_settings_of_one_tenant_are_two_rows(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     insert(&pool, NOWAK, WINDOW, "7776000").await.unwrap();
     insert(&pool, NOWAK, "iam.tenant_deletion_window", "7776000")
@@ -146,7 +180,7 @@ async fn two_settings_of_one_tenant_are_two_rows(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn a_row_without_a_tenant_a_name_or_a_value_is_refused(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     for values in [
         format!("(NULL, '{WINDOW}', '7776000')"),
@@ -170,7 +204,7 @@ async fn a_row_without_a_tenant_a_name_or_a_value_is_refused(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn a_value_that_is_not_json_is_refused(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     // A literal without a cast: the column itself decides what it takes. Only the constants
     // of this file go into the text.
@@ -192,7 +226,7 @@ async fn a_value_that_is_not_json_is_refused(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn json_of_every_kind_is_kept_as_it_was_written(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     for (name, value) in [
         ("iam.a_number", "7776000"),
@@ -217,7 +251,7 @@ async fn json_of_every_kind_is_kept_as_it_was_written(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn a_row_can_be_deleted(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
     insert(&pool, NOWAK, WINDOW, "7776000").await.unwrap();
 
     // Going back to the default will be this.
@@ -236,7 +270,7 @@ async fn a_row_can_be_deleted(pool: PgPool) {
 
 #[sqlx::test(migrations = false)]
 async fn the_key_is_the_tenant_first_and_then_the_name(pool: PgPool) {
-    zgm_settings::migrate(&pool).await.unwrap();
+    migrate_with_defaults(&pool).await;
 
     // The tenant first: then the same index finds one setting of a tenant and all of them.
     let columns: Vec<String> = sqlx::query_scalar(
@@ -252,4 +286,71 @@ async fn the_key_is_the_tenant_first_and_then_the_name(pool: PgPool) {
     .unwrap();
 
     assert_eq!(columns, ["tenant_id", "name"]);
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_row_of_a_setting_without_a_default_is_refused(pool: PgPool) {
+    migrate_with_defaults(&pool).await;
+
+    let refused = insert(&pool, NOWAK, "iam.no_default", "7776000")
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(kind_of(&refused), Some(ErrorKind::ForeignKeyViolation)),
+        "{refused}"
+    );
+    assert_eq!(count(&pool).await, 0);
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_default_a_tenant_uses_cannot_be_deleted(pool: PgPool) {
+    migrate_with_defaults(&pool).await;
+    insert(&pool, NOWAK, WINDOW, "7776000").await.unwrap();
+
+    let refused = delete_default(&pool, WINDOW).await.unwrap_err();
+
+    // restrict_violation: the key says `ON DELETE RESTRICT`, which refuses at once.
+    let code = refused
+        .as_database_error()
+        .and_then(|error| error.code().map(|code| code.into_owned()));
+    assert_eq!(code.as_deref(), Some("23001"), "{refused}");
+    // Both rows stay: no cascade.
+    assert_eq!(count(&pool).await, 1);
+    let defaults: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM zgm_settings.default_settings WHERE name = $1")
+            .bind(WINDOW)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(defaults, 1);
+}
+
+#[sqlx::test(migrations = false)]
+async fn a_default_no_tenant_uses_can_be_deleted(pool: PgPool) {
+    migrate_with_defaults(&pool).await;
+    insert(&pool, NOWAK, WINDOW, "7776000").await.unwrap();
+
+    assert_eq!(delete_default(&pool, "iam.a_flag").await.unwrap(), 1);
+}
+
+#[sqlx::test(migrations = false)]
+async fn the_name_has_an_index_of_its_own_for_the_foreign_key(pool: PgPool) {
+    migrate_with_defaults(&pool).await;
+
+    // The key of the table begins with the tenant, so it does not find the rows of one
+    // setting; without this index, deleting a default would read the whole table.
+    let indexes: Vec<Vec<String>> = sqlx::query_scalar(
+        "SELECT array_agg(a.attname::text ORDER BY k.position) \
+         FROM pg_index i \
+         CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, position) \
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
+         WHERE i.indrelid = 'zgm_settings.tenant_settings'::regclass AND NOT i.indisprimary \
+         GROUP BY i.indexrelid",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(indexes, [["name"]]);
 }

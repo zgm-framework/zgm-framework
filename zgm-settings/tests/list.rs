@@ -6,7 +6,7 @@ mod common;
 use sqlx::PgPool;
 use zgm_settings::{Setting, Settings, SettingsError, Value};
 
-use common::{IamSetting, KOWALSKI, NOWAK, days, set_by_hand, settings_on};
+use common::{IamSetting, KOWALSKI, NOWAK, days, default_by_hand, set_by_hand, settings_on};
 
 fn unchanged(name: &str, default: Value) -> Setting {
     Setting {
@@ -93,6 +93,9 @@ async fn the_rows_of_another_tenant_do_not_count(pool: PgPool) {
 #[sqlx::test(migrations = false)]
 async fn the_row_of_a_name_without_a_default_is_left_out(pool: PgPool) {
     let settings = settings_on(&pool).await;
+    // Defaults an earlier version of the module left, which this one no longer gives.
+    default_by_hand(&pool, "iam.dropped_setting", "duration", "2592000").await;
+    default_by_hand(&pool, "aaa.before_all", "flag", "false").await;
     set_by_hand(&pool, NOWAK, "iam.dropped_setting", "7776000").await;
     set_by_hand(&pool, NOWAK, "aaa.before_all", "true").await;
 
@@ -137,6 +140,8 @@ async fn a_row_of_another_kind_than_the_default_is_an_error(pool: PgPool) {
 async fn without_defaults_the_list_is_empty(pool: PgPool) {
     zgm_settings::migrate(&pool).await.unwrap();
     let settings = Settings::builder().pool(pool.clone()).build();
+    // A default an earlier start left, which this program has not given.
+    default_by_hand(&pool, IamSetting::UserDeletionWindow, "duration", "2592000").await;
     set_by_hand(&pool, NOWAK, IamSetting::UserDeletionWindow, "7776000").await;
 
     let all = settings.tenant_id(NOWAK).list().await.unwrap();

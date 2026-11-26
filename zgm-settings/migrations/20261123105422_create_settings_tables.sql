@@ -64,8 +64,8 @@ CREATE TABLE zgm_settings.tenant_settings (
     -- key, and a tenant deleted there leaves its rows here.
     tenant_id   uuid        NOT NULL,
 
-    -- The name of the setting with the prefix of its module, e.g. 'iam.user_deletion_window'.
-    -- The module turns a variant of its enum of settings into this name.
+    -- The name of the setting, e.g. 'iam.user_deletion_window', whose default is in
+    -- `default_settings`: the foreign key below.
     name        text        NOT NULL,
 
     -- The value the tenant set, as JSON of any kind: 7776000, true, "text" or
@@ -78,8 +78,19 @@ CREATE TABLE zgm_settings.tenant_settings (
 
     -- The tenant first: one setting of a tenant and all the settings of a tenant are both found
     -- through this index. Nothing refers to a row, so there is no id of its own.
-    CONSTRAINT tenant_settings_pkey PRIMARY KEY (tenant_id, name)
+    CONSTRAINT tenant_settings_pkey PRIMARY KEY (tenant_id, name),
+
+    -- A tenant has no value of a setting without a default, and a default a tenant uses is not
+    -- deleted. No cascade: one DELETE of a default would take the values of every tenant that
+    -- changed it.
+    CONSTRAINT tenant_settings_name_fkey FOREIGN KEY (name)
+        REFERENCES zgm_settings.default_settings (name) ON DELETE RESTRICT
 );
+
+-- The key begins with the tenant, so it does not find the rows of one setting; this does,
+-- when the foreign key checks a default that is deleted. Without it, that check reads the
+-- whole table.
+CREATE INDEX tenant_settings_name_idx ON zgm_settings.tenant_settings (name);
 
 CREATE TRIGGER touch_tenant_settings
     BEFORE UPDATE ON zgm_settings.tenant_settings

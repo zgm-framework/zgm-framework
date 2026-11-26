@@ -32,6 +32,16 @@ pub(crate) enum Json<'a> {
 }
 
 impl Value {
+    /// The word of the kind in the column `kind` of the defaults.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Value::Duration(_) => "duration",
+            Value::Number(_) => "number",
+            Value::Flag(_) => "flag",
+            Value::Text(_) => "text",
+        }
+    }
+
     /// Whether `self` is of the same kind as `other`, whatever their values.
     pub(crate) fn is_of_the_kind_of(&self, other: &Value) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
@@ -42,11 +52,33 @@ impl Value {
     pub(crate) fn to_json(&self) -> Option<Json<'_>> {
         match self {
             Value::Duration(duration) if duration.subsec_nanos() != 0 => None,
-            Value::Duration(duration) => Some(Json::Literal(duration.as_secs().to_string())),
-            Value::Number(number) => Some(Json::Literal(number.to_string())),
-            Value::Flag(flag) => Some(Json::Literal(flag.to_string())),
-            Value::Text(text) => Some(Json::Text(text)),
+            _ => Some(self.to_json_in_whole_seconds()),
         }
+    }
+
+    /// The value the way it goes into the table, a duration with the fraction of a second cut
+    /// off.
+    pub(crate) fn to_json_in_whole_seconds(&self) -> Json<'_> {
+        match self {
+            Value::Duration(duration) => Json::Literal(duration.as_secs().to_string()),
+            Value::Number(number) => Json::Literal(number.to_string()),
+            Value::Flag(flag) => Json::Literal(flag.to_string()),
+            Value::Text(text) => Json::Text(text),
+        }
+    }
+
+    /// The value a row of the defaults holds, read as the kind its column `kind` names;
+    /// `None` for a kind the module does not know, or a value not of the kind named.
+    pub(crate) fn read_as(kind: &str, stored: &StoredValue) -> Option<Value> {
+        [
+            Value::Duration(Duration::ZERO),
+            Value::Number(0),
+            Value::Flag(false),
+            Value::Text(String::new()),
+        ]
+        .into_iter()
+        .find(|like| like.kind() == kind)
+        .and_then(|like| like.read_like(stored))
     }
 
     /// The value a row holds, read as the kind of `self`, the default of its setting; `None`

@@ -5,7 +5,9 @@ mod common;
 use sqlx::PgPool;
 use zgm_settings::SettingsError;
 
-use common::{IamSetting, KOWALSKI, NOWAK, days, json_of, rows, set_by_hand, settings_on};
+use common::{
+    IamSetting, KOWALSKI, NOWAK, days, default_by_hand, json_of, rows, set_by_hand, settings_on,
+};
 
 #[sqlx::test(migrations = false)]
 async fn the_row_goes_and_the_tenant_has_the_default_again(pool: PgPool) {
@@ -76,6 +78,8 @@ async fn the_row_of_another_tenant_and_another_setting_stay(pool: PgPool) {
 #[sqlx::test(migrations = false)]
 async fn a_name_without_a_default_is_refused_and_its_row_stays(pool: PgPool) {
     let settings = settings_on(&pool).await;
+    // A default an earlier version of the module left, which this one no longer gives.
+    default_by_hand(&pool, "iam.dropped_setting", "duration", "2592000").await;
     set_by_hand(&pool, NOWAK, "iam.dropped_setting", "7776000").await;
 
     let refused = settings

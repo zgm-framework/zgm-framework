@@ -5,7 +5,7 @@ mod common;
 use sqlx::{AssertSqlSafe, PgPool};
 use zgm_settings::{SettingsError, Value};
 
-use common::{IamSetting, KOWALSKI, NOWAK, days, set_by_hand, settings_on};
+use common::{IamSetting, KOWALSKI, NOWAK, days, default_by_hand, set_by_hand, settings_on};
 
 #[sqlx::test(migrations = false)]
 async fn without_a_row_a_tenant_gets_the_default(pool: PgPool) {
@@ -110,6 +110,8 @@ async fn a_name_without_a_default_is_an_error_with_a_row_and_without(pool: PgPoo
         "{without_a_row}"
     );
 
+    // A default an earlier version of the module left, which this one no longer gives.
+    default_by_hand(&pool, "iam.unknown", "duration", "2592000").await;
     set_by_hand(&pool, NOWAK, "iam.unknown", "7776000").await;
     let with_a_row = in_nowak.get("iam.unknown").await.unwrap_err();
     assert!(

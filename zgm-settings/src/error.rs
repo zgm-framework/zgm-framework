@@ -28,6 +28,19 @@ pub enum SettingsError {
         found: String,
     },
 
+    /// The row of the default of a setting holds a kind the module does not know, or a value
+    /// not of the kind it names, e.g. `colour` or a text for a duration. Only SQL written by
+    /// hand can write such a row.
+    #[error("the default of the setting {name} cannot be read: the kind {kind}, the value {found}")]
+    UnreadableDefault {
+        /// The name of the setting.
+        name: String,
+        /// The word in the column `kind`.
+        kind: String,
+        /// The JSON the row holds.
+        found: String,
+    },
+
     /// A duration with a fraction of a second was given to
     /// [`set`](crate::TenantScope::set). The table keeps whole seconds, so it would keep
     /// another value than the one given; nothing is written.

@@ -1,4 +1,4 @@
-# ADR-0003: Two tables: `default_settings`, one row per setting with its kind, its value as `jsonb` and its bounds as `bigint`; `tenant_settings`, one row per tenant and setting under the key `(tenant_id, name)`; the database checks no kind and no bound
+# ADR-0003: Two tables: `default_settings`, one row per setting with its kind, its value as `jsonb` and its bounds as `bigint`; `tenant_settings`, one row per tenant and setting under the key `(tenant_id, name)`, its name a foreign key to the default; the database checks no kind and no bound
 
 > **Status:** accepted
 > **Date:** 2026-11-24
@@ -52,11 +52,19 @@
 | **A. None; the module's code checks them** | each rule lives in one place | SQL by hand can write a row the module will not accept |
 | **B. `CHECK` constraints** | SQL by hand cannot break a rule | each rule in two places, the code and the database, which drift apart |
 
+**Between the two tables:**
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A. A foreign key from `tenant_settings.name` to `default_settings.name`, `ON DELETE RESTRICT`** | a tenant has no value of a setting without a default; a default a tenant uses is not deleted | one more index on `tenant_settings`, written with every value of a tenant |
+| **B. No foreign key** | one index less | only the code keeps the two tables together |
+| **C. A foreign key `ON DELETE CASCADE`** | deleting a default takes what hangs from it | one `DELETE` of a default takes the values of every tenant that changed it |
+
 **The names of the tables:** `tenant_settings`, `settings`, `overrides` (what it holds: only changes against the defaults), `tenant_overrides`; and for the defaults, `default_settings`.
 
 ## Decision
 
-**Name: A. Value: A. Kind: A. Bounds: A. Rules: A. Tables: `default_settings` and `tenant_settings`** (decided by the maintainer: on 2026-11-23 "well, let it be A", "A", and on the table of tenants "or actually let it be `tenant_settings`", the name from the module's enum through `strum`: "and it has to have strum, which turns that name in the enum into a string"; on 2026-11-24 "ok A" on the kind, "A" on the bounds, "yes" on `default_settings`, and on the rules: "only a function of the module changes it").
+**Name: A. Value: A. Kind: A. Bounds: A. Rules: A. Between the tables: A. Tables: `default_settings` and `tenant_settings`** (decided by the maintainer: on 2026-11-23 "well, let it be A", "A", and on the table of tenants "or actually let it be `tenant_settings`", the name from the module's enum through `strum`: "and it has to have strum, which turns that name in the enum into a string"; on 2026-11-24 "ok A" on the kind, "A" on the bounds, "yes" on `default_settings`, on the rules "only a function of the module changes it", and on the foreign key, once it was clear that it goes through the name of the setting and not through a tenant, "well, it can be a reference from `tenant_settings` to `default_settings`, right?").
 
 ```sql
 CREATE TABLE zgm_settings.default_settings (
@@ -76,13 +84,18 @@ CREATE TABLE zgm_settings.tenant_settings (
     value       jsonb       NOT NULL,   -- e.g. 7776000
     created_at  timestamptz NOT NULL DEFAULT statement_timestamp(),
     updated_at  timestamptz NOT NULL DEFAULT statement_timestamp(),
-    CONSTRAINT tenant_settings_pkey PRIMARY KEY (tenant_id, name)
+    CONSTRAINT tenant_settings_pkey PRIMARY KEY (tenant_id, name),
+    CONSTRAINT tenant_settings_name_fkey FOREIGN KEY (name)
+        REFERENCES zgm_settings.default_settings (name) ON DELETE RESTRICT
 );
+
+CREATE INDEX tenant_settings_name_idx ON zgm_settings.tenant_settings (name);
 ```
 
 - **The name is made by `strum::IntoStaticStr`** with `serialize_all = "snake_case"` and the module's `prefix`, e.g. `prefix = "iam."`.
 - **`default_settings` is keyed by the name alone,** and `tenant_settings` by the tenant first and then the name. Neither has an id of its own. The triggers `touch_default_settings` and `touch_tenant_settings` set `updated_at` on every change.
 - **The four words of `kind` are the kinds of the Rust enum `Value`.** A duration is kept in whole seconds, in the value and in the bounds.
+- **The name of a row of a tenant is a foreign key to its default,** `ON DELETE RESTRICT`, with an index of its own, `tenant_settings_name_idx`.
 - **There is no foreign key to the tenants.** `tenant_id` is a plain UUID, as in `zgm-limits`.
 - **Going back to the default deletes the row of the tenant.** Neither table has soft deletion.
 - **The database checks no name, no kind and no bound,** and no value beyond JSON. The code that writes and reads a setting checks them.
@@ -95,13 +108,18 @@ CREATE TABLE zgm_settings.tenant_settings (
 - **`bigint` for the bounds:** only a duration in whole seconds and a whole number have bounds, and both are whole numbers of 64 bits. Checked on PostgreSQL 18: a bound written as the text `'1.5'`, `'a day'` or `'true'` is refused. A fraction written as a number, `1.5` without quotes, is rounded to `2`; the module writes whole numbers from Rust, so it never sends one.
 - **No rules in the database:** only the module's code writes the tables, so it is the one place the rules live. The database keeps what that code cannot guarantee on its own, one row per name and one per tenant and name, and the dates it sets itself.
 - **The keys:** a default is always found by its name, and a row of a tenant by its tenant and its name. The tenant first, so that the same index finds one setting of a tenant and all of its settings.
+- **The foreign key to the default:** the repository keeps in the database what the code cannot guarantee on its own, and a default deleted while a tenant writes its value is one such thing: only the database sees both at once. `RESTRICT` rather than the default `NO ACTION`: its check cannot be put off to the end of a transaction, and PostgreSQL answers it with `restrict_violation` (`23001`), not `foreign_key_violation` (`23503`), which a test tells apart.
+- **The index on the name:** the key of `tenant_settings` begins with the tenant, so it does not find the rows of one setting. Without the index, deleting a default would read the whole table to check that no tenant uses it.
 - **No foreign key to the tenants:** the tenants are in another module, and a key across modules would tie them together.
 - **`default_settings` checked by tests,** with SQL by hand: a new row gets the moment of its statement as both dates, also late in a transaction; a change sets `updated_at` to the moment of the change, whatever the statement says; the same name twice is refused even when every other column differs, and the first row stays; two settings are two rows; a missing bound is kept empty; the bounds keep the least and the greatest number of 64 bits; a bound written as a fraction or a word is refused; a row without a name, a kind or a value is refused; `'30 days'` is refused as no JSON; a value of each of the four kinds is kept as written; an unknown kind, a least above a most and bounds on a flag are all accepted. Then the table was broken on purpose, one change at a time (26 changes: the key of the name and the kind, or no key; the value as `text` or `json`, or without `NOT NULL`; the kind without `NOT NULL`; each bound as `numeric`, `integer` or `text`, `min` also as `jsonb`, each `NOT NULL`; the dates from `now()`, `updated_at` without a default; the trigger missing, after the update or with `now()`; the table in `public`; a `CHECK` on the kind, on the order of the bounds, on the bounds of a flag). 25 times a test went red. The one change no test can catch is dropping `NOT NULL` from `name`: a column of the primary key is `NOT NULL` anyway.
 - **`tenant_settings` checked by tests,** with SQL by hand: a new row gets the moment of its statement as both dates, also late in a transaction; a change sets `updated_at` to the moment of the change, whatever the statement says; the same setting twice in one tenant is refused and the first value stays; the same setting in two tenants and two settings of one tenant are two rows each; a row without a tenant, a name or a value is refused; `'90 days'` is refused as no JSON; a number, `true`, a text and an object are kept as written; a row can be deleted; the key is `tenant_id`, then `name`. Each of these, and the migration history in the module's own schema, was broken on purpose one at a time (19 changes, among them the key in another order or of one column, the value as `text`, `bigint` or `json`, the dates from `now()`, the trigger with `now()`, after the update or missing, the table in `public`, deletes refused). 18 times a test went red; again the one change left was dropping `NOT NULL` from `name`.
+- **The foreign key checked by tests,** with SQL by hand: a row of a tenant for a setting without a default is refused; a default a tenant uses cannot be deleted, the database answers `restrict_violation`, and both rows stay; a default no tenant uses can be deleted; the name has an index of its own, of that column alone. Broken on purpose six times (`CASCADE`, `NO ACTION`, `SET NULL`, no foreign key, no index, an index of the name and the tenant), and every time a test went red.
 
 ## Consequences
 
 - **A tenant deleted in `zgm-iam` leaves its rows in `tenant_settings`.** What happens to them is decided later.
+- **A default a tenant uses cannot be deleted** until the rows of the tenants that changed it are. A setting a module no longer has keeps its default as long as a tenant has a value of it.
+- **A row of a tenant written by SQL by hand needs its default first.**
 - **A value of the wrong kind, written by SQL by hand, shows when a module reads it.**
 - **Any word is a kind and any number a bound to the database,** and a least above a most is kept. Only the module's functions refuse them.
 - **Any text is a name to the database.** Only the names a module gives as defaults are accepted by the module's functions.

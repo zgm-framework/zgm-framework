@@ -27,6 +27,68 @@ pub(crate) struct StoredValue {
     pub(crate) json: String,
 }
 
+/// The JSON of a value as the two parameters a query binds: the text of a JSON literal, or a
+/// text the database turns into a JSON string. One of them is `None`.
+fn parameters<'a>(json: &'a Json<'_>) -> (Option<&'a str>, Option<&'a str>) {
+    match json {
+        Json::Literal(literal) => (Some(literal.as_str()), None),
+        Json::Text(text) => (None, Some(*text)),
+    }
+}
+
+/// Writes the default of a setting unless the setting has one already, and says whether it
+/// wrote it: a default once written is left as it is, whatever is given later. Two copies of
+/// a program writing at once write one row; the other waits for it and writes nothing.
+pub(crate) async fn insert_default(
+    connection: &mut PgConnection,
+    name: &str,
+    kind: &str,
+    json: &Json<'_>,
+    min: Option<i64>,
+    max: Option<i64>,
+) -> Result<bool, SettingsError> {
+    let (literal, text) = parameters(json);
+    let written = sqlx::query(
+        "INSERT INTO zgm_settings.default_settings (name, kind, value, min, max) \
+         VALUES ($1, $2, coalesce($3::jsonb, to_jsonb($4::text)), $5, $6) \
+         ON CONFLICT (name) DO NOTHING",
+    )
+    .bind(name)
+    .bind(kind)
+    .bind(literal)
+    .bind(text)
+    .bind(min)
+    .bind(max)
+    .execute(connection)
+    .await?;
+    Ok(written.rows_affected() == 1)
+}
+
+/// The kind and the value of the default of a setting, or `None` without a row.
+pub(crate) async fn select_default(
+    connection: &mut PgConnection,
+    name: &str,
+) -> Result<Option<(String, StoredValue)>, SettingsError> {
+    let row: Option<(String, String, String, String)> = sqlx::query_as(concat!(
+        "SELECT kind, ",
+        stored_value_columns!(),
+        " FROM zgm_settings.default_settings WHERE name = $1"
+    ))
+    .bind(name)
+    .fetch_optional(connection)
+    .await?;
+    Ok(row.map(|(kind, json_type, text, json)| {
+        (
+            kind,
+            StoredValue {
+                json_type,
+                text,
+                json,
+            },
+        )
+    }))
+}
+
 /// The value one tenant set for one setting, or `None` when the tenant has no row for it.
 pub(crate) async fn select_value(
     connection: &mut PgConnection,
@@ -57,10 +119,7 @@ pub(crate) async fn upsert_value(
     name: &str,
     json: &Json<'_>,
 ) -> Result<bool, SettingsError> {
-    let (literal, text) = match json {
-        Json::Literal(literal) => (Some(literal.as_str()), None),
-        Json::Text(text) => (None, Some(*text)),
-    };
+    let (literal, text) = parameters(json);
     let written = sqlx::query(
         "INSERT INTO zgm_settings.tenant_settings (tenant_id, name, value) \
          VALUES ($1, $2, coalesce($3::jsonb, to_jsonb($4::text))) \
