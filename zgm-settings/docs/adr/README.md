@@ -11,9 +11,9 @@ A few things that help when reading them:
 | No. | Decision | Status | Date |
 |---|---|---|---|
 | [0001](0001-settings-in-a-module-of-their-own.md) | The settings of tenants are a module of their own, which other modules reach through a trait; `zgm-limits` keeps its own table | accepted | 2026-11-23 |
-| [0002](0002-defaults-built-into-the-modules.md) | The defaults are built into the modules, given to the settings module when they are built and kept in memory; the database holds only what tenants changed | accepted | 2026-11-23 |
-| [0003](0003-the-tenant-settings-table.md) | `zgm_settings.tenant_settings` has one row per tenant and setting: the name with the prefix of its module, the value as `jsonb`, the key `(tenant_id, name)` and no foreign key | accepted | 2026-11-23 |
-| [0004](0004-the-module-runs-its-migrations.md) | The `migrate` function creates the module's table, and the migration history lives in the module's schema | accepted | 2026-11-23 |
+| [0002](0002-defaults-built-into-the-modules.md) | The defaults and their bounds are built into the modules and written to the database once, when a module first starts; later only a function of the settings module changes them | accepted | 2026-11-24 |
+| [0003](0003-the-tenant-settings-table.md) | Two tables: `default_settings`, one row per setting with its kind, its value as `jsonb` and its bounds as `bigint`; `tenant_settings`, one row per tenant and setting under the key `(tenant_id, name)`; the database checks no kind and no bound | accepted | 2026-11-24 |
+| [0004](0004-the-module-runs-its-migrations.md) | The `migrate` function creates the module's tables, and the migration history lives in the module's schema | accepted | 2026-11-23 |
 | [0005](0005-settings-and-its-defaults.md) | `Settings` is built with a `bon` builder; the modules give it defaults of the four kinds of `Value`, which it keeps in memory, shared by its clones; a default given again replaces the one before | accepted | 2026-11-23 |
 | [0006](0006-get-a-setting-of-a-tenant.md) | The functions of one tenant hang from `Settings::tenant_id`; `get` gives the tenant's value or the default, read as the kind of the default from plain JSON | accepted | 2026-11-23 |
 | [0007](0007-set-a-setting-of-a-tenant.md) | `set` writes or changes the row of a tenant in one statement and says whether anything changed; it checks the kind and whole seconds, and no range | accepted | 2026-11-23 |

@@ -15,12 +15,12 @@ async fn tables_of(pool: &PgPool, schema: &str) -> Vec<String> {
 }
 
 #[sqlx::test(migrations = false)]
-async fn migrate_creates_the_table_and_keeps_its_history_in_its_own_schema(pool: PgPool) {
+async fn migrate_creates_the_tables_and_keeps_its_history_in_its_own_schema(pool: PgPool) {
     zgm_settings::migrate(&pool).await.unwrap();
 
     assert_eq!(
         tables_of(&pool, "zgm_settings").await,
-        ["_sqlx_migrations", "tenant_settings"]
+        ["_sqlx_migrations", "default_settings", "tenant_settings"]
     );
     // Nothing of the module outside its schema.
     assert_eq!(tables_of(&pool, "public").await, Vec::<String>::new());

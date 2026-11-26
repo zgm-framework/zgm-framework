@@ -1,4 +1,5 @@
--- The schema of the module and its table: the settings that tenants changed.
+-- The schema of the module and its tables: the default of every setting, and the settings
+-- that tenants changed.
 
 -- Everything of the module lives in its own schema. `zgm_settings::migrate` creates it before
 -- this file runs, to keep the history of migrations there; a plain run of the file creates it
@@ -15,10 +16,45 @@ BEGIN
 END;
 $$;
 
+-- The default of a setting, for every tenant that has not changed it: one row per setting and
+-- no tenant, as a default is the same for all of them. The module of the setting writes the row
+-- when it first starts and does not touch it after that, so the row keeps the value and the
+-- bounds it was first given, and a new number in the module's code does not change it. A later
+-- change goes through a function of this module.
+--
+-- Only the module's code writes this table, so the database keeps only what that code cannot
+-- guarantee on its own (one row per setting) and the dates it sets itself. The kind, the order
+-- of the bounds and the lack of bounds on a flag or a text are the code's to check.
+CREATE TABLE zgm_settings.default_settings (
+    -- The name of the setting with the prefix of its module, e.g. 'iam.user_deletion_window'.
+    -- The module turns a variant of its enum of settings into this name.
+    name        text        NOT NULL,
+
+    -- 'duration', 'number', 'flag' or 'text'; the Rust enum `Value` holds the list. A number of
+    -- seconds and a plain number are the same JSON, so only this column tells them apart.
+    kind        text        NOT NULL,
+
+    -- The default as JSON: 2592000 (30 days in seconds), 10, false or "Welcome".
+    value       jsonb       NOT NULL,
+
+    -- The least and the most a tenant may set, in seconds for a duration; NULL is no bound, and
+    -- always for a flag or a text. Whole numbers, as a duration has whole seconds.
+    min         bigint,
+    max         bigint,
+
+    created_at  timestamptz NOT NULL DEFAULT statement_timestamp(),
+    updated_at  timestamptz NOT NULL DEFAULT statement_timestamp(),
+
+    -- A setting is always found by its name, so the name is the key and there is no id.
+    CONSTRAINT default_settings_pkey PRIMARY KEY (name)
+);
+
+CREATE TRIGGER touch_default_settings
+    BEFORE UPDATE ON zgm_settings.default_settings
+    FOR EACH ROW EXECUTE FUNCTION zgm_settings.set_updated_at();
+
 -- A setting one tenant changed: one row per tenant and setting, and only for the settings the
--- tenant changed. No row means the default, which the module of the setting gives when it is
--- built; the defaults are not in the database, so a new default reaches every tenant that has
--- not changed the setting.
+-- tenant changed. No row means the default, in `default_settings`.
 --
 -- Going back to the default deletes the row. Only the module's code writes this table, so the
 -- database keeps only what that code cannot guarantee on its own (one value per tenant and

@@ -20,7 +20,7 @@ fn migrator() -> Migrator {
     migrator
 }
 
-/// Creates or updates the table of the module, in the schema `zgm_settings`. The application
+/// Creates or updates the tables of the module, in the schema `zgm_settings`. The application
 /// calls it when it is deployed or when it starts, before it uses anything else of the
 /// module.
 ///
@@ -28,7 +28,7 @@ fn migrator() -> Migrator {
 /// already ran is passed over, and the copies wait for each other.
 ///
 /// The account of `pool` needs the right to create a schema in the database the first time,
-/// and owns the table.
+/// and owns the tables.
 pub async fn migrate(pool: &PgPool) -> Result<(), SettingsError> {
     migrator().run(pool).await?;
     Ok(())
