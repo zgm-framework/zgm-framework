@@ -115,15 +115,19 @@ impl TenantScope {
     /// The value of the row is not read, so a row of another kind than the default, which
     /// only SQL written by hand can write and [`get`](Self::get) refuses, goes too.
     ///
-    /// A name no module gave a default for is [`SettingsError::UnknownSetting`], and nothing
-    /// is deleted: the row of a setting no module gives any more stays.
+    /// The setting is known when its default is in the database, also when this program did
+    /// not give it, and the default is not read either: a row of a tenant goes also when the
+    /// default cannot be read. One statement deletes the row and finds the default. A name
+    /// without a default in the database is [`SettingsError::UnknownSetting`].
     pub async fn restore_default(&self, name: impl AsRef<str>) -> Result<bool, SettingsError> {
         let name = name.as_ref();
-        if self.settings.default_of(name).is_none() {
+        let mut connection = self.settings.pool().acquire().await?;
+        let (known, deleted) =
+            repository::delete_value(&mut connection, self.tenant_id, name).await?;
+        if !known {
             return Err(SettingsError::UnknownSetting(name.to_owned()));
         }
-        let mut connection = self.settings.pool().acquire().await?;
-        repository::delete_value(&mut connection, self.tenant_id, name).await
+        Ok(deleted)
     }
 
     /// All the settings of the tenant, in the order of their names: every setting a module

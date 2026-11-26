@@ -203,19 +203,27 @@ pub(crate) async fn upsert_value(
     Ok(written.rows_affected() == 1)
 }
 
-/// Deletes the row of a setting of a tenant, and says whether there was one.
+/// Deletes the row of a setting of a tenant, in one statement that also says whether the
+/// setting has a default: `(has a default, there was a row)`. Without a default there is no
+/// row either, as the foreign key keeps none.
 pub(crate) async fn delete_value(
     connection: &mut PgConnection,
     tenant_id: Uuid,
     name: &str,
-) -> Result<bool, SettingsError> {
-    let deleted =
-        sqlx::query("DELETE FROM zgm_settings.tenant_settings WHERE tenant_id = $1 AND name = $2")
-            .bind(tenant_id)
-            .bind(name)
-            .execute(connection)
-            .await?;
-    Ok(deleted.rows_affected() == 1)
+) -> Result<(bool, bool), SettingsError> {
+    let answer = sqlx::query_as(
+        "WITH deleted AS ( \
+             DELETE FROM zgm_settings.tenant_settings WHERE tenant_id = $1 AND name = $2 \
+             RETURNING 1 \
+         ) \
+         SELECT EXISTS (SELECT FROM zgm_settings.default_settings WHERE name = $2), \
+                EXISTS (SELECT FROM deleted)",
+    )
+    .bind(tenant_id)
+    .bind(name)
+    .fetch_one(connection)
+    .await?;
+    Ok(answer)
 }
 
 /// All the values one tenant set, by the names of their settings, read through the primary

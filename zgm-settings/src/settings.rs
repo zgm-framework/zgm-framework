@@ -110,13 +110,4 @@ impl Settings {
     pub(crate) fn pool(&self) -> &PgPool {
         &self.pool
     }
-
-    /// The default of one setting, or `None` when no module gave one.
-    pub(crate) fn default_of(&self, name: &str) -> Option<Value> {
-        self.defaults
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(name)
-            .cloned()
-    }
 }
