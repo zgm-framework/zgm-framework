@@ -6,7 +6,7 @@ The counters live in the application's own database, so a limit holds across eve
 
 Part of [zgm-framework](../README.md), a collection of modules used by [leads.run](https://leads.run).
 
-> **Status:** version 0.1, before the first release. The API may still change. Every design choice is written down in [docs/adr](docs/adr/README.md).
+> **Status:** version 0.1.0, the first release. The API may still change before 1.0. Every design choice is written down in [docs/adr](docs/adr/README.md).
 
 - **One SQL statement per attempt.** Checking the limit and counting the attempt are the same statement, so of any number of attempts sent at once only the allowed number pass.
 - **A refusal writes nothing.** A flood of attempts on a blocked key costs the database one read each.

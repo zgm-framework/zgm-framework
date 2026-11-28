@@ -6,7 +6,7 @@ The defaults and their bounds are in the database, one row per setting, written 
 
 Part of [zgm-framework](../README.md), a collection of modules used by [leads.run](https://leads.run).
 
-> **Status:** version 0.1, before the first release. The API may still change. Every design choice is written down in [docs/adr](docs/adr/README.md).
+> **Status:** version 0.1.0, the first release. The API may still change before 1.0. Every design choice is written down in [docs/adr](docs/adr/README.md).
 
 - **Defaults from the modules, kept in the database:** the first start of a module writes them, later starts leave them, and `change_default` changes them while the program runs.
 - **Bounds:** a duration or a number may have a least and a most, and `set` refuses a value outside them. A value set before the bounds were narrowed stays as it was.
