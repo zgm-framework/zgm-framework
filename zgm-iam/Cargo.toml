@@ -1,0 +1,37 @@
+[package]
+name = "zgm-iam"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "The tenants of an application and their users in PostgreSQL, so that a copy of the database does not say who they are: states, deletion after a window, a loop that deletes"
+authors = ["Paweł Zygmunt"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zgm-framework/zgm-framework"
+keywords = ["iam", "postgres", "sqlx", "authorization", "multitenancy"]
+categories = ["web-programming", "database", "authentication"]
+readme = "README.md"
+# Not published on crates.io: the crate is used as a git dependency for now.
+publish = false
+
+[dependencies]
+async-trait = "=0.1.92"
+bon = "=3.10.2"
+# Without the system's time zone and the time-zone database: the module keeps only moments.
+jiff = { version = "=1.0.1", default-features = false, features = ["std"] }
+jiff-sqlx = { version = "=1.0.0", default-features = false, features = ["postgres"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "migrate", "macros", "uuid"] }
+strum = { version = "=0.28.0", features = ["derive"] }
+thiserror = "=2.0.21"
+# The loop that deletes the users past their date runs as a task of the runtime.
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "time"] }
+uuid = "=1.26.1"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[dev-dependencies]
+# Only the example uses it, to show the glue an application writes; the crate depends on no
+# other module.
+zgm-settings = { path = "../zgm-settings" }
+tokio = { version = "=1.54.1", default-features = false, features = ["macros", "rt", "test-util"] }
