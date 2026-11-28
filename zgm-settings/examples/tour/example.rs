@@ -27,6 +27,15 @@ pub fn days(count: u64) -> Duration {
     Duration::from_secs(count * DAY)
 }
 
+/// The deletion window as the module gives it: 30 days, at least a day, at most a year.
+pub fn deletion_window() -> DefaultSetting {
+    DefaultSetting::Duration {
+        value: days(30),
+        min: Some(days(1)),
+        max: Some(days(365)),
+    }
+}
+
 /// A module with settings. It gives its defaults when it starts: the first start writes them
 /// to the database, and a later one, also of a version with other numbers, leaves them there.
 pub struct ExampleIam;
@@ -34,14 +43,7 @@ pub struct ExampleIam;
 impl ExampleIam {
     pub async fn start(settings: &Settings) -> Result<Self, SettingsError> {
         let defaults = [
-            (
-                IamSetting::UserDeletionWindow,
-                DefaultSetting::Duration {
-                    value: days(30),
-                    min: Some(days(1)),
-                    max: Some(days(365)),
-                },
-            ),
+            (IamSetting::UserDeletionWindow, deletion_window()),
             (
                 IamSetting::MaxUsers,
                 DefaultSetting::Number {
@@ -67,6 +69,7 @@ impl ExampleIam {
 /// rather than 7776000.
 pub fn shown(value: &Value) -> String {
     match value {
+        Value::Duration(duration) if duration.as_secs() == DAY => "1 day".to_owned(),
         Value::Duration(duration) if duration.as_secs() % DAY == 0 => {
             format!("{} days", duration.as_secs() / DAY)
         }

@@ -7,7 +7,7 @@ This is a collection of modules extracted from [leads.run](https://leads.run), w
 | Module | What it does |
 |---|---|
 | [`zgm-limits`](zgm-limits/README.md) | Attempt limits (sign-in, codes, exports) counted in PostgreSQL: one statement per attempt, rules a tenant can override, a list of blocked keys, audit events. Depends on no other module. |
-| [`zgm-settings`](zgm-settings/README.md) | The settings of tenants in PostgreSQL: each module gives the defaults of its settings, and the database holds only what a company changed; read, set, restore the default, list them all. Depends on no other module. |
+| [`zgm-settings`](zgm-settings/README.md) | The settings of tenants in PostgreSQL: each module gives the defaults of its settings with their bounds, kept in the database, and a company changes only what it wants; read, set within the bounds, restore the default, list them all, change a default. Depends on no other module. |
 
 More modules will be added here as they are ready.
 

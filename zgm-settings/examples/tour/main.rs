@@ -10,10 +10,10 @@ mod example;
 
 use std::time::Duration;
 
-use example::{ExampleIam, IamSetting, days, shown};
+use example::{ExampleIam, IamSetting, days, deletion_window, shown};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
-use zgm_settings::{Setting, Settings, SettingsError, Value};
+use zgm_settings::{DefaultSetting, Setting, Settings, SettingsError, Value};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -81,6 +81,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nThe settings of Nowak, as a screen shows them:");
     print_list(&in_nowak.list().await?);
 
+    // ---- A person changes a default for every company -------------------------------------
+
+    // E.g. on a screen of the program: 14 days instead of 30, at least a week, at most 60
+    // days. The module refuses numbers that do not fit together, and writes nothing then.
+    let shorter = DefaultSetting::Duration {
+        value: days(14),
+        min: Some(days(7)),
+        max: Some(days(60)),
+    };
+    let changed = settings
+        .change_default(IamSetting::UserDeletionWindow, shorter.clone())
+        .await?;
+    println!(
+        "\nThe default of the deletion window is now 14 days, from 7 to 60. Changed: {changed}"
+    );
+    let changed = settings
+        .change_default(IamSetting::UserDeletionWindow, shorter)
+        .await?;
+    println!("The same again. Changed: {changed}");
+    let window = in_kowalski.get(IamSetting::UserDeletionWindow).await?;
+    println!("IAM reads for Kowalski, at once: {}", shown(&window));
+    // The bounds do not reach back: Nowak keeps 90 days, above the new most, until Nowak
+    // sets another value.
+    let window = in_nowak.get(IamSetting::UserDeletionWindow).await?;
+    println!(
+        "IAM reads for Nowak, who set 90 days before: {}",
+        shown(&window)
+    );
+    refused(
+        in_nowak
+            .set(IamSetting::UserDeletionWindow, Value::Duration(days(90)))
+            .await,
+        "Nowak saving 90 days again",
+    )?;
+
     // ---- Back to the default ----------------------------------------------------------------
 
     let restored = in_nowak
@@ -116,10 +151,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await,
         "a fraction of a second",
     )?;
+    refused(
+        in_nowak.set(IamSetting::MaxUsers, Value::Number(0)).await,
+        "no users at all, below the least",
+    )?;
+    refused(
+        settings
+            .change_default(
+                IamSetting::UserDeletionWindow,
+                DefaultSetting::Duration {
+                    value: days(30),
+                    min: Some(days(60)),
+                    max: Some(days(59)),
+                },
+            )
+            .await,
+        "a default whose least is above its most",
+    )?;
+    refused(
+        settings
+            .change_default(
+                IamSetting::UserDeletionWindow,
+                DefaultSetting::Duration {
+                    value: days(400),
+                    min: Some(days(1)),
+                    max: Some(days(365)),
+                },
+            )
+            .await,
+        "a default above its own most",
+    )?;
+    refused(
+        settings
+            .change_default(
+                IamSetting::UserDeletionWindow,
+                DefaultSetting::Text("30 days".to_owned()),
+            )
+            .await,
+        "a text for the default of a duration",
+    )?;
 
     // ---- Leaving nothing behind -------------------------------------------------------------
 
     in_nowak.restore_default(IamSetting::WelcomeText).await?;
+    // A later start of the module would leave the changed default, so the tour puts the
+    // numbers of the module back itself.
+    settings
+        .change_default(IamSetting::UserDeletionWindow, deletion_window())
+        .await?;
     let left = in_nowak.list().await?;
     println!(
         "\nAfter restoring the welcome text too, Nowak has changed {} settings.",
@@ -128,19 +207,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Prints the settings of a company the way a screen might.
+/// Prints the settings of a company the way a screen might: the value, whether the company
+/// changed it, and the bounds.
 fn print_list(all: &[Setting]) {
     for setting in all {
+        let mut notes = Vec::new();
         if setting.overridden {
-            println!(
-                "  {} = {} (changed; the default is {})",
-                setting.name,
-                shown(&setting.value),
+            notes.push(format!(
+                "changed; the default is {}",
                 shown(&setting.default)
-            );
-        } else {
-            println!("  {} = {}", setting.name, shown(&setting.value));
+            ));
         }
+        match (&setting.min, &setting.max) {
+            (Some(min), Some(max)) => notes.push(format!("from {} to {}", shown(min), shown(max))),
+            (Some(min), None) => notes.push(format!("at least {}", shown(min))),
+            (None, Some(max)) => notes.push(format!("at most {}", shown(max))),
+            (None, None) => {}
+        }
+        let notes = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", notes.join("; "))
+        };
+        println!("  {} = {}{notes}", setting.name, shown(&setting.value));
     }
 }
 
