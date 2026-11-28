@@ -76,6 +76,34 @@ pub(crate) async fn insert_default(
     Ok(written.rows_affected() == 1)
 }
 
+/// Changes the default of a setting and its bounds, and says whether anything changed: the
+/// same default and bounds again write nothing, so `updated_at` stays. One statement; two
+/// changes at once end with one of them, as the statement locks the row.
+pub(crate) async fn update_default(
+    connection: &mut PgConnection,
+    name: &str,
+    json: &Json<'_>,
+    min: Option<i64>,
+    max: Option<i64>,
+) -> Result<bool, SettingsError> {
+    let (literal, text) = parameters(json);
+    let changed = sqlx::query(
+        "UPDATE zgm_settings.default_settings \
+         SET value = coalesce($2::jsonb, to_jsonb($3::text)), min = $4, max = $5 \
+         WHERE name = $1 \
+           AND (value, min, max) IS DISTINCT FROM \
+               (coalesce($2::jsonb, to_jsonb($3::text)), $4::bigint, $5::bigint)",
+    )
+    .bind(name)
+    .bind(literal)
+    .bind(text)
+    .bind(min)
+    .bind(max)
+    .execute(connection)
+    .await?;
+    Ok(changed.rows_affected() == 1)
+}
+
 /// The row of the default of a setting.
 pub(crate) struct DefaultRow {
     /// The word of its kind.

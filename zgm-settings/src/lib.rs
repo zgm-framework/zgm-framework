@@ -2,12 +2,13 @@
 //!
 //! The modules give [`Settings`] the defaults of their settings, with their bounds, when they
 //! start ([`Settings::add_default`], [`DefaultSetting`]). The first start writes each default
-//! to the database, and later ones leave it there. What a tenant changed is in a row of its
-//! own. [`migrate`] creates both tables. Within one tenant ([`Settings::tenant_id`]),
+//! to the database, and later ones leave it there; [`Settings::change_default`] changes it
+//! later, e.g. from a screen of the program. What a tenant changed is in a row of its own. [`migrate`] creates both tables. Within one tenant ([`Settings::tenant_id`]),
 //! [`TenantScope::get`] reads a setting, [`TenantScope::set`] changes it,
 //! [`TenantScope::restore_default`] brings the default back, and [`TenantScope::list`] gives
 //! all of them. A value is of one of the kinds of [`Value`].
 
+mod bounds;
 mod default_setting;
 mod error;
 mod migrate;

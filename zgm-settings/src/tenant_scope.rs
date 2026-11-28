@@ -2,6 +2,7 @@
 
 use uuid::Uuid;
 
+use crate::bounds;
 use crate::error::SettingsError;
 use crate::repository;
 use crate::setting::Setting;
@@ -103,7 +104,7 @@ impl TenantScope {
         let json = value
             .to_json()
             .ok_or_else(|| SettingsError::FractionOfASecond(name.to_owned()))?;
-        within_the_bounds(name, &value, row.min, row.max)?;
+        bounds::within(name, &value, row.min, row.max)?;
         repository::upsert_value(&mut connection, self.tenant_id, name, &json).await
     }
 
@@ -168,34 +169,4 @@ impl TenantScope {
             })
             .collect()
     }
-}
-
-/// Refuses a duration or a number below `min` or above `max`, a duration in whole seconds;
-/// `None` is no bound, and a flag or a text has none.
-fn within_the_bounds(
-    name: &str,
-    value: &Value,
-    min: Option<i64>,
-    max: Option<i64>,
-) -> Result<(), SettingsError> {
-    let Some(number) = value.as_bounded() else {
-        return Ok(());
-    };
-    if let Some(min) = min
-        && number < min
-    {
-        return Err(SettingsError::BelowTheLeast {
-            name: name.to_owned(),
-            min: value.bound_like(min),
-        });
-    }
-    if let Some(max) = max
-        && number > max
-    {
-        return Err(SettingsError::AboveTheMost {
-            name: name.to_owned(),
-            max: value.bound_like(max),
-        });
-    }
-    Ok(())
 }

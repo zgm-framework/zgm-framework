@@ -7,7 +7,7 @@
 ## Context
 
 - **A module reads a setting of a tenant,** e.g. `zgm-iam` the days a user of the tenant Nowak waits for deletion: 90 if Nowak has a row, else the default of 30.
-- **The default lies in `zgm_settings.default_settings`, with its kind and its bounds, and the value of a tenant in `zgm_settings.tenant_settings`** ([ADR-0003](0003-the-tenant-settings-table.md)). A default may be changed in the database while the program runs, through a function of the module ([ADR-0002](0002-defaults-built-into-the-modules.md)).
+- **The default lies in `zgm_settings.default_settings`, with its kind and its bounds, and the value of a tenant in `zgm_settings.tenant_settings`** ([ADR-0003](0003-the-tenant-settings-table.md)). A default may be changed in the database while the program runs, through `change_default` ([ADR-0002](0002-defaults-built-into-the-modules.md), [ADR-0010](0010-change-a-default.md)).
 - **A program may run in several copies at once.**
 - **In `zgm-iam` the functions of one tenant hang from `iam.tenant_id(id)`,** so that the tenant cannot be forgotten or swapped with another UUID. The maintainer asked for that there.
 - **`zgm-limits` refuses a limit that is not on its list** (`UnknownLimit`), and `zgm-iam` refuses a word of state it does not know (`UnknownState`) rather than taking it for another state.

@@ -5,9 +5,10 @@ use std::time::Duration;
 use crate::value::Value;
 
 /// The default of a setting, as the module of the setting gives it to
-/// [`Settings::add_default`](crate::Settings::add_default): the value of every tenant that has
-/// not changed the setting, and for a duration or a number the least and the most a tenant
-/// may set.
+/// [`Settings::add_default`](crate::Settings::add_default), or as a person changes it with
+/// [`Settings::change_default`](crate::Settings::change_default): the value of every tenant
+/// that has not changed the setting, and for a duration or a number the least and the most a
+/// tenant may set.
 ///
 /// Both bounds must be given, and `None` is no bound:
 ///
@@ -22,9 +23,10 @@ use crate::value::Value;
 /// let self_sign_up = DefaultSetting::Flag(false);
 /// ```
 ///
-/// Nothing is checked: a least above the most, or a value outside its own bounds, is written
-/// as it is given. A duration is written in whole seconds, the fraction of a second cut off,
-/// and a bound of more seconds than a `bigint` holds as the most it holds.
+/// `add_default` checks nothing: a least above the most, or a value outside its own bounds,
+/// is written as it is given, and a duration in whole seconds, the fraction of a second cut
+/// off. `change_default` refuses all three. A bound of more seconds than a `bigint` holds is
+/// kept as the most it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefaultSetting {
     /// A length of time, e.g. how long a user waits for deletion.
@@ -59,6 +61,20 @@ impl DefaultSetting {
             DefaultSetting::Number { value, .. } => Value::Number(*value),
             DefaultSetting::Flag(flag) => Value::Flag(*flag),
             DefaultSetting::Text(text) => Value::Text(text.clone()),
+        }
+    }
+
+    /// Whether a duration or one of its bounds has a fraction of a second, which the table
+    /// cannot keep.
+    pub(crate) fn has_a_fraction_of_a_second(&self) -> bool {
+        match self {
+            DefaultSetting::Duration { value, min, max } => [Some(*value), *min, *max]
+                .into_iter()
+                .flatten()
+                .any(|duration| duration.subsec_nanos() != 0),
+            DefaultSetting::Number { .. } | DefaultSetting::Flag(_) | DefaultSetting::Text(_) => {
+                false
+            }
         }
     }
 

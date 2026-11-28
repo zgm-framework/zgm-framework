@@ -118,7 +118,7 @@ CREATE INDEX tenant_settings_name_idx ON zgm_settings.tenant_settings (name);
 ## Consequences
 
 - **A tenant deleted in `zgm-iam` leaves its rows in `tenant_settings`.** What happens to them is decided later.
-- **A default a tenant uses cannot be deleted** until the rows of the tenants that changed it are. A setting a module no longer has keeps its default as long as a tenant has a value of it.
+- **A default a tenant uses cannot be deleted** until the rows of the tenants that changed it are. A setting a module no longer has keeps its default: no function of the module deletes one ([ADR-0010](0010-change-a-default.md)), and the database would refuse while a tenant has a value of it.
 - **A row of a tenant written by SQL by hand needs its default first.**
 - **A value of the wrong kind, written by SQL by hand, shows when a module reads it.**
 - **Any word is a kind and any number a bound to the database,** and a least above a most is kept. Only the module's functions refuse them.

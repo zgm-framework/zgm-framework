@@ -32,7 +32,7 @@ The first design was presented whole, each choice after a pattern of the reposit
 
 ## Decision
 
-**As in the first table, and which: A** (the first design accepted by the maintainer on 2026-11-23: "ok"; on 2026-11-26 on which settings: "well, delete it then, everything goes through the settings module now, right? go on"). A setting a module dropped is deleted through a function of the settings module, not left out of the list. With nothing left that reads it, the memory of the defaults was deleted as well ([ADR-0005](0005-settings-and-its-defaults.md)).
+**As in the first table, and which: A** (the first design accepted by the maintainer on 2026-11-23: "ok"; on 2026-11-26 on which settings: "well, delete it then, everything goes through the settings module now, right? go on"). A setting a module dropped is not left out of the list; on 2026-11-28 the maintainer decided that no function deletes a default ([ADR-0010](0010-change-a-default.md)), so it stays there. With nothing left that reads it, the memory of the defaults was deleted as well ([ADR-0005](0005-settings-and-its-defaults.md)).
 
 ```rust
 let all = in_nowak.list().await?;
@@ -61,6 +61,6 @@ let all = in_nowak.list().await?;
 ## Consequences
 
 - **A program that shows the list does not call `get` for each setting.**
-- **A setting a module dropped stays on the list** until its default is deleted through a function of the settings module.
+- **A setting a module dropped stays on the list,** as no function deletes its default ([ADR-0010](0010-change-a-default.md)).
 - **One wrong row hides the list of that tenant:** a row of the tenant until it is removed with `restore_default` ([ADR-0008](0008-restore-the-default.md)), a row of a default for every tenant until it is mended.
 - **Every `list` reads every default and the rows of the tenant,** which are at most as many as its settings.

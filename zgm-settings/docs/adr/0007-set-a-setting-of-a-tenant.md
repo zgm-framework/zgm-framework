@@ -2,7 +2,7 @@
 
 > **Status:** accepted
 > **Date:** 2026-11-26
-> **Applies to:** `zgm-settings` (`TenantScope::set`, `repository::select_default`, `repository::upsert_value`, `Value::to_json`, `Value::as_bounded`, `SettingsError`, `tests/set.rs`, `tests/set_at_once.rs`)
+> **Applies to:** `zgm-settings` (`TenantScope::set`, `repository::select_default`, `repository::upsert_value`, `Value::to_json`, `Value::as_bounded`, `src/bounds.rs`, `SettingsError`, `tests/set.rs`, `tests/set_at_once.rs`)
 
 ## Context
 
@@ -64,5 +64,5 @@ in_nowak.set(IamSetting::UserDeletionWindow, Value::Duration(four_hundred_days))
 
 - **Every `set` is two statements on one connection,** with no transaction: the read of the default and the write.
 - **A value is held against the bounds as they were when it was read.** A change of the bounds that comes between the read and the write does not reach that `set`, as it would not reach a value set a moment before.
-- **A mistake in the bounds a module gave refuses values.** A least above the most refuses every value, until the default is changed through the function of the module.
+- **A mistake in the bounds a module gave refuses values.** A least above the most refuses every value, until the default is changed through `change_default`, which refuses such bounds ([ADR-0010](0010-change-a-default.md)).
 - **Two tenants writing at once do not disturb each other,** and two writes of one tenant at once end with one of the two values, because the statement locks the row it changes.

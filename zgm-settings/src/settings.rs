@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::bounds;
 use crate::default_setting::DefaultSetting;
 use crate::error::SettingsError;
 use crate::repository;
@@ -66,6 +67,63 @@ impl Settings {
             &mut connection,
             name.as_ref(),
             given.kind(),
+            &given.to_json_in_whole_seconds(),
+            min,
+            max,
+        )
+        .await
+    }
+
+    /// Changes the default of a setting and its bounds, e.g. when a person changes them on a
+    /// screen of the program, and says whether anything changed: `false` when the database
+    /// had that default and those bounds already, and then not even `updated_at` moves.
+    ///
+    /// ```ignore
+    /// // 14 days instead of 30, at least a week, at most 90 days.
+    /// let window = DefaultSetting::Duration { value: two_weeks, min: Some(a_week), max: Some(ninety_days) };
+    /// settings.change_default(IamSetting::UserDeletionWindow, window).await?; // true
+    /// ```
+    ///
+    /// The change is seen at once by every copy of the program: a tenant without a value of
+    /// its own gets the new default, and the next [`set`](crate::TenantScope::set) of any
+    /// tenant is held against the new bounds. A value a tenant set before is left as it is,
+    /// also outside the new bounds. A later start of a module leaves the change, as
+    /// [`add_default`](Self::add_default) does not write over a default that is there.
+    ///
+    /// Nothing is written for a name without a default in the database
+    /// ([`SettingsError::UnknownSetting`]), for a default of another kind than the one in the
+    /// database ([`SettingsError::WrongKind`]), for a duration or a bound with a fraction of a
+    /// second ([`SettingsError::FractionOfASecond`]), for a least above the most
+    /// ([`SettingsError::LeastAboveTheMost`]), or for a default below its least or above its
+    /// most ([`SettingsError::BelowTheLeast`], [`SettingsError::AboveTheMost`]). A least equal
+    /// to the most, and a default on a bound, are allowed. A default the module cannot read
+    /// is written over when the kind given is the one its row names.
+    pub async fn change_default(
+        &self,
+        name: impl AsRef<str>,
+        default: DefaultSetting,
+    ) -> Result<bool, SettingsError> {
+        let name = name.as_ref();
+        let given = default.value();
+        let mut connection = self.pool.acquire().await?;
+        let row = repository::select_default(&mut connection, name)
+            .await?
+            .ok_or_else(|| SettingsError::UnknownSetting(name.to_owned()))?;
+        if row.kind != given.kind() {
+            return Err(SettingsError::WrongKind {
+                name: name.to_owned(),
+                found: format!("{given:?}"),
+            });
+        }
+        if default.has_a_fraction_of_a_second() {
+            return Err(SettingsError::FractionOfASecond(name.to_owned()));
+        }
+        let (min, max) = default.bounds();
+        bounds::in_order(name, &given, min, max)?;
+        bounds::within(name, &given, min, max)?;
+        repository::update_default(
+            &mut connection,
+            name,
             &given.to_json_in_whole_seconds(),
             min,
             max,

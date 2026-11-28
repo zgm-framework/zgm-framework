@@ -61,6 +61,6 @@
 ## Consequences
 
 - **`default_settings` has no tenant,** as a default is the same for every tenant. It is the one table of this module whose rows are not under a tenant.
-- **A new number in a module's code reaches only a database without the row.** A database that has the row keeps the number it was first given, until it is changed through the function.
-- **A setting a module no longer has keeps its row.** Nothing deletes it yet.
+- **A new number in a module's code reaches only a database without the row.** A database that has the row keeps the number it was first given, until it is changed through `change_default` ([ADR-0010](0010-change-a-default.md)).
+- **A setting a module no longer has keeps its row.** No function deletes it ([ADR-0010](0010-change-a-default.md)).
 - **Starting a module writes to the database,** so it can fail when the database does not answer.
